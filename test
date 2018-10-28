@@ -1,0 +1,13 @@
+#use "topfind";;
+#require "atdgen";;
+#load "category.cmo";;
+#load "results_j.cmo";;
+
+let read_file name =
+	let ic = open_in name in
+	let length = in_channel_length ic in
+	really_input_string ic length;;
+
+let contents = read_file "ages.results.json";;
+
+let data = Results_j.data_of_string contents;;

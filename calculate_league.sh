@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Criterium Racing League
-EVENT_IDS="84629 82688 80885 79137 77454 75619 95159 93646 91983 90324 88428 86504"
+EVENT_IDS="96800 95159 93646 91983 90324 88428 86504 84629"
 
 # ZwiftPower sprints URL
 SPRINTS_URI='https://www.zwiftpower.com/api3.php?do=event_sprints&zid=@@EVENT_ID@@&csv=1'
@@ -9,6 +9,7 @@ SPRINTS_URI='https://www.zwiftpower.com/api3.php?do=event_sprints&zid=@@EVENT_ID
 # ZwiftPower results URL
 RESULTS_URI='https://www.zwiftpower.com/api3.php?do=event_results&zid=@@EVENT_ID@@&csv=1'
 
+rm -rf temp
 mkdir -p temp
 
 for zid in $EVENT_IDS; do

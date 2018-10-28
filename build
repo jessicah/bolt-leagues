@@ -1,0 +1,7 @@
+#!/bin/bash
+
+rm results_*
+atdgen -t results.atd
+atdgen -j results.atd
+ocamlfind ocamlc -c -package atdgen adapter.ml category.ml intstring.ml results_t.mli results_j.mli results_t.mli results_j.ml
+

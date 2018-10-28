@@ -1,0 +1,155 @@
+type bool_as_string = string wrap <ocaml
+	t="bool"
+	wrap="fun x -> x <> \"0\""
+	unwrap="function true -> \"1\" | false -> \"0\""
+>
+
+type bool_as_int = int wrap <ocaml
+	t="bool"
+	wrap="fun x -> x <> 0"
+	unwrap="function true -> 1 | false -> 0"
+>
+
+type int_option_as_string = string wrap <ocaml
+	t="int option"
+	wrap="function \"\" -> None | s -> Some (int_of_string s)"
+	unwrap="function None -> \"\" | Some i -> string_of_int i"
+>
+
+type int_with_commas = string wrap <ocaml
+	t="int"
+	wrap="fun s -> int_of_string (String.concat \"\" (String.split_on_char ',' s))"
+	unwrap="string_of_int"
+>
+
+type category_as_string = string wrap <ocaml
+	module="Category"
+>
+
+type rider_result = {
+	ftp : int_option_as_string;
+	friend: bool_as_int;
+	pt: string;
+	label: string;
+	zid: int;
+	pos: int;
+	position_in_cat: int;
+	name: string;
+	act_id: int;
+	act_name: string;
+	zwid: int;
+	res_id: string;
+	aid: string;
+	lag: int;
+	uid: string;
+	time: float list;
+	time_gun: float;
+	gap: float;
+	male: bool_as_int;
+	tid: string;
+	topen: string;
+	tname: string;
+	tc: string;
+	tbc: string;
+	tbd: string;
+	zeff: int;
+	category: category_as_string;
+	height: int list;
+	flag: string;
+	avg_hr: int list;
+	max_hr: int list;
+	hrmax: int list;
+	hrm: bool_as_int;
+	weight: float list;
+	power_type: int;
+	display_pos: int;
+	age: int;
+	zada: bool_as_int;
+	note: string;
+	division: int;
+	skill: int_with_commas;
+	skill_gain: int;
+	np: int list;
+	hrr: float list;
+	hreff: int list;
+	avg_power: int list;
+	avg_wkg: float list;
+	wkg_ftp: float list;
+	wftp: int list;
+	wkg_guess: bool_as_int;
+	wkg1200: float list;
+	wkg300: float list;
+	wkg120: float list;
+	wkg60: float list;
+	wkg30: float list;
+	wkg15: float list;
+	wkg5: float list;
+	w1200: int list;
+	w300: int list;
+	w120: int list;
+	w60: int list;
+	w30: int list;
+	w15: int list;
+	w5: int list;
+	is_guess: bool_as_int;
+	upg: bool_as_int;
+	penalty: int;
+	reg: int;
+	fl: int;
+	pts: int;
+	pts_pos: int;
+	info: bool_as_int;
+	info_notes: string list;
+}
+
+type data = {
+	data: rider_result list;
+}
+
+type 'v table_as_object = (string * 'v) list <json repr="object">
+	wrap <ocaml t="(string, 'v) Hashtbl.t"
+		wrap="fun l -> let tbl = Hashtbl.create (2 * List.length l) in
+			List.iter (fun (k, v) -> Hashtbl.add tbl k v) l; tbl"
+		unwrap="fun tbl -> Hashtbl.fold (fun k v l -> (k, v) ::l) tbl []">
+
+type sprint_result = {
+	ftp : int_option_as_string;
+	pt: string;
+	label: string;
+	zid: int;
+	pos: int;
+	position_in_cat: int;
+	name: string;
+	zwid: int;
+	res_id: string;
+	aid: string;
+	male: bool_as_int;
+	tid: string;
+	topen: string;
+	tname: string;
+	tc: string;
+	tbc: string;
+	tbd: string;
+	category: category_as_string;
+	height: int list;
+	flag: string;
+	hrm: bool_as_int;
+	weight: float list;
+	power_type: int;
+	display_pos: int;
+	age: int;
+	zada: bool_as_int;
+	note: string;
+	is_guess: bool_as_int;
+	upg: bool_as_int;
+	penalty: int;
+	reg: int;
+	fl: int;
+	msec: float table_as_object;
+	watts: int table_as_object;
+	wkg: float table_as_object;
+}
+
+type sprints = {
+	data: sprint_result list <json name="data">;
+}
