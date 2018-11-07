@@ -26,6 +26,29 @@ type category_as_string = string wrap <ocaml
 	module="Category"
 >
 
+type 'v list_as_singleton = 'v list
+	wrap <ocaml t="'v"
+		wrap="fun l -> List.hd l"
+		unwrap="fun x -> [x]">
+
+type categorised_results = rider_result list
+	wrap <ocaml t="rider_result list array"
+		wrap="fun riders -> let arr = Array.make 5 [] in
+			List.iter (fun rider ->
+				let ix = Category.int_of_category rider.r_category in
+				arr.(ix) <- rider :: arr.(ix)) riders;
+			arr"
+		unwrap="fun arr -> List.concat (Array.to_list arr)">
+
+type categorised_sprints = sprint_results list
+	wrap <ocaml t="sprint_results list array"
+		wrap="fun riders -> let arr = Array.make 5 [] in
+			List.iter (fun rider ->
+				let ix = Category.int_of_category rider.s_category in
+				arr.(ix) <- rider :: arr.(ix)) riders;
+			arr"
+		unwrap="fun arr -> List.concat (Array.to_list arr)">
+
 type rider_result = {
 	ftp : int_option_as_string;
 	friend: bool_as_int;
@@ -42,7 +65,7 @@ type rider_result = {
 	aid: string;
 	lag: int;
 	uid: string;
-	time: float list;
+	time: float list_as_singleton;
 	time_gun: float;
 	gap: float;
 	male: bool_as_int;
@@ -54,13 +77,13 @@ type rider_result = {
 	tbd: string;
 	zeff: int;
 	category: category_as_string;
-	height: int list;
+	height: int list_as_singleton;
 	flag: string;
-	avg_hr: int list;
-	max_hr: int list;
-	hrmax: int list;
+	avg_hr: int list_as_singleton;
+	max_hr: int list_as_singleton;
+	hrmax: int list_as_singleton;
 	hrm: bool_as_int;
-	weight: float list;
+	weight: float list_as_singleton;
 	power_type: int;
 	display_pos: int;
 	age: int;
@@ -69,28 +92,28 @@ type rider_result = {
 	division: int;
 	skill: int_with_commas;
 	skill_gain: int;
-	np: int list;
-	hrr: float list;
-	hreff: int list;
-	avg_power: int list;
-	avg_wkg: float list;
-	wkg_ftp: float list;
-	wftp: int list;
+	np: int list_as_singleton;
+	hrr: float list_as_singleton;
+	hreff: int list_as_singleton;
+	avg_power: int list_as_singleton;
+	avg_wkg: float list_as_singleton;
+	wkg_ftp: float list_as_singleton;
+	wftp: int list_as_singleton;
 	wkg_guess: bool_as_int;
-	wkg1200: float list;
-	wkg300: float list;
-	wkg120: float list;
-	wkg60: float list;
-	wkg30: float list;
-	wkg15: float list;
-	wkg5: float list;
-	w1200: int list;
-	w300: int list;
-	w120: int list;
-	w60: int list;
-	w30: int list;
-	w15: int list;
-	w5: int list;
+	wkg1200: float list_as_singleton;
+	wkg300: float list_as_singleton;
+	wkg120: float list_as_singleton;
+	wkg60: float list_as_singleton;
+	wkg30: float list_as_singleton;
+	wkg15: float list_as_singleton;
+	wkg5: float list_as_singleton;
+	w1200: int list_as_singleton;
+	w300: int list_as_singleton;
+	w120: int list_as_singleton;
+	w60: int list_as_singleton;
+	w30: int list_as_singleton;
+	w15: int list_as_singleton;
+	w5: int list_as_singleton;
 	is_guess: bool_as_int;
 	upg: bool_as_int;
 	penalty: int;
@@ -100,10 +123,10 @@ type rider_result = {
 	pts_pos: int;
 	info: bool_as_int;
 	info_notes: string list;
-}
+} <ocaml field_prefix="r_">
 
-type data = {
-	data: rider_result list;
+type race = {
+	race_results <json name="data">: categorised_results;
 }
 
 type 'v table_as_object = (string * 'v) list <json repr="object">
@@ -112,7 +135,7 @@ type 'v table_as_object = (string * 'v) list <json repr="object">
 			List.iter (fun (k, v) -> Hashtbl.add tbl k v) l; tbl"
 		unwrap="fun tbl -> Hashtbl.fold (fun k v l -> (k, v) ::l) tbl []">
 
-type sprint_result = {
+type sprint_results = {
 	ftp : int_option_as_string;
 	pt: string;
 	label: string;
@@ -131,10 +154,10 @@ type sprint_result = {
 	tbc: string;
 	tbd: string;
 	category: category_as_string;
-	height: int list;
+	height: int list_as_singleton;
 	flag: string;
 	hrm: bool_as_int;
-	weight: float list;
+	weight: float list_as_singleton;
 	power_type: int;
 	display_pos: int;
 	age: int;
@@ -148,8 +171,8 @@ type sprint_result = {
 	msec: float table_as_object;
 	watts: int table_as_object;
 	wkg: float table_as_object;
-}
+} <ocaml field_prefix="s_">
 
 type sprints = {
-	data: sprint_result list <json name="data">;
+	sprint_results <json name="data">: categorised_sprints;
 }

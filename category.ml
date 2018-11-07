@@ -1,16 +1,23 @@
-type t = CatA | CatB | CatC | CatD | CatE
+type t = A | B | C | D | E
 
 let wrap = function
-	| "A" -> CatA
-	| "B" -> CatB
-	| "C" -> CatC
-	| "D" -> CatD
-	| "E" -> CatE
+	| "A" -> A
+	| "B" -> B
+	| "C" -> C
+	| "D" -> D
+	| "E" -> E
 	| _ -> failwith "invalid category"
 
 let unwrap = function
-	| CatA -> "A"
-	| CatB -> "B"
-	| CatC -> "C"
-	| CatD -> "D"
-	| CatE -> "E"
+	| A -> "A"
+	| B -> "B"
+	| C -> "C"
+	| D -> "D"
+	| E -> "E"
+
+let int_of_category = function
+	| A -> 0
+	| B -> 1
+	| C -> 2
+	| D -> 3
+	| E -> 4

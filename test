@@ -8,6 +8,10 @@ let read_file name =
 	let length = in_channel_length ic in
 	really_input_string ic length;;
 
-let contents = read_file "ages.results.json";;
+let race_contents = read_file "ages.results.json";;
 
-let data = Results_j.data_of_string contents;;
+let race = Results_j.race_of_string race_contents;;
+
+let sprint_contents = read_file "ages.sprints.json";;
+
+let sprints = Results_j.sprints_of_string sprint_contents;;
