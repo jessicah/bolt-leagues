@@ -2,20 +2,39 @@
 type event_id = string;;
 type racer_id = string;;
 
-type category = string;;
+module Cat = struct
+    type t = A | B | C | D | E
+
+    let of_string = function
+    | "A" -> A
+    | "B" -> B
+    | "C" -> C
+    | "D" -> D
+    | "E" -> E
+    | otherwise -> failwith "Invalid category"
+
+    let to_string = function
+    | A -> "A"
+    | B -> "B"
+    | C -> "C"
+    | D -> "D"
+    | E -> "E"
+end;;
 
 type event_key = {
     event_id : event_id;
-    category : category;
+    category : Cat.t;
 };;
 
 type racer = {
+    rid : int;
     rname : string;
     mutable rpoints : int list;
-    rcategory : category;
+    rcategory : Cat.t;
 }
 
 type event_racer = {
+    id : int;
     name : string;
     position : int;
     mutable points : int;
@@ -59,7 +78,7 @@ let () =
     Csv.iter (fun row ->
             let event_key = {
                 event_id = List.nth row 5;
-                category = List.nth row 27;
+                category = Cat.of_string (List.nth row 27);
             } in
             match Hashtbl.find_opt events event_key with
             | None ->
@@ -68,6 +87,7 @@ let () =
                     total_participants = 1;
                 } in
                 Hashtbl.add new_event.racers (List.nth row 8) {
+                        id = int_of_string (List.nth row 11);
                         name = List.nth row 8;
                         position = int_of_string (List.nth row 7);
                         points = 0;
@@ -76,6 +96,7 @@ let () =
             | Some event ->
                 event.total_participants <- event.total_participants + 1;
                 Hashtbl.add event.racers (List.nth row 8) {
+                        id = int_of_string (List.nth row 11);
                         name = List.nth row 8;
                         position = int_of_string (List.nth row 7);
                         points = 0;
@@ -95,6 +116,7 @@ let () =
                 match Hashtbl.find_opt racers racer_key with
                 | None ->
                     Hashtbl.add racers event_racer.name {
+                            rid = event_racer.id;
                             rname = event_racer.name;
                             rpoints = [event_racer.points];
                             rcategory = event_key.category;
@@ -106,7 +128,7 @@ let () =
     
     (* print results *)
     Hashtbl.iter (fun racer_id racer ->
-        Printf.printf "%s [%s]: %d points\n" racer.rname racer.rcategory (List.fold_left (+) 0 (top_6_positions racer.rpoints));
+        Printf.printf "%s [%s]: %d points\n" racer.rname (Cat.to_string racer.rcategory) (List.fold_left (+) 0 (top_6_positions racer.rpoints));
         Printf.printf "  Completed %d races, points: " (List.length racer.rpoints);
         List.iter (fun p -> Printf.printf " %d" p) racer.rpoints;
         Printf.printf "\n  Best results: ";
@@ -115,3 +137,20 @@ let () =
     )
         racers;
 ;;
+
+module Zwifter = Set.Make(struct
+    type t = racer
+
+    let compare left right = compare left.rid right.rid
+end);;
+
+let to_set table =
+    Hashtbl.fold (fun k v s -> Zwifter.add v s) table Zwifter.empty;;
+
+let cat_racers =
+    let cats = [| Cat.A; Cat.B; Cat.C; Cat.D; Cat.E|] in
+    let all = to_set racers in
+    let sets = Array.make 5 all in
+    Array.mapi (fun ix set ->
+        Zwifter.filter (fun zwifter ->
+            zwifter.rcategory = cats.(ix)) set) sets;;
