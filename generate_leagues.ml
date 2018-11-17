@@ -2,6 +2,8 @@
 
 #use "topfind";;
 #require "atdgen";;
+#load "category.cmo";;
+#load "results_j.cmo";;
 
 open Results_t;;
 module Cat = Category;;
@@ -24,21 +26,9 @@ let num_riders = Array.map List.length race.race_results;;
 
 let segment_names =
     let module StringSet = Set.Make(String) in
-    let s = ref StringSet.empty in
-    Array.iter (fun list ->
-        List.iter (fun rider -> Hashtbl.iter (fun k v -> s := StringSet.add k !s) rider.s_msec) list)
-        sprints.sprint_results;
-    StringSet.elements !s;;
-
-(* this needs to be set for each sprint segment when building sprint sets, to get the right key
-   from the hashtables *)
-let sprint_segment = ref ""
-
-module SprintSet = Set.Make(struct
-    type t = sprint_results
-    let compare left right =
-        compare (Hashtbl.find left.s_msec !sprint_segment) (Hashtbl.find right.s_msec !sprint_segment)
-end);;
+    StringSet.elements (Array.fold_left (fun set list ->
+        List.fold_left (fun set rider -> Hashtbl.fold (fun k v s -> StringSet.add k s) rider.s_msec set) set list)
+        StringSet.empty sprints.sprint_results);;
 
 type sprint_t = {
         sprint_rider : sprint_results;
@@ -46,34 +36,39 @@ type sprint_t = {
         segment_time : float;
     }
 
-module SprintSet2 = Set.Make(struct
+module SprintSet = Set.Make(struct
     type t = sprint_t
 
     let compare left right =
-        compare left.segment_time right.segment_time
+        let result = compare left.segment_time right.segment_time in
+        if result = 0 then
+            compare left.sprint_rider.s_zwid right.sprint_rider.s_zwid
+        else
+            result
 end);;
 
-let segment_results2 category =
-    let results = Array.make (List.length segment_names) SprintSet2.empty in
+let segment_results category =
+    let results = Array.make (List.length segment_names) SprintSet.empty in
     List.iteri (fun index segment ->
         List.iter (fun rider ->
             let t = {
                 sprint_rider = rider; segment_name = segment; segment_time = Hashtbl.find rider.s_msec segment;
             } in
-            results.(index) <- SprintSet2.add t results.(index)) sprints.sprint_results.(int_of_category category))
+            results.(index) <- SprintSet.add t results.(index)) sprints.sprint_results.(int_of_category category))
         segment_names;
-    Array.map SprintSet2.elements results;;
+    Array.map SprintSet.elements results;;
 
 let print_sprint pos sprinter = Printf.printf "%d: %s - %f\n" pos sprinter.sprint_rider.s_name sprinter.segment_time;;
 
-let top3 category segment = match (segment_results2 category).(segment) with
+let top3 category segment = match (segment_results category).(segment) with
     | a :: b :: c :: _ -> print_sprint 1 a; print_sprint 2 b; print_sprint 3 c
     | a :: b :: _ -> print_sprint 1 a; print_sprint 2 b; Printf.printf " - end of list -\n"
     | a :: _ -> print_sprint 1 a; Printf.printf " - end of list -\n"
     | _ -> Printf.printf " - no riders -\n"
 ;;
 
-List.iteri (fun ix name -> Printf.printf "Segment %s:\n" name; top3 Cat.A ix) segment_names;;
+let () =
+    List.iteri (fun ix name -> Printf.printf "Segment %s:\n" name; top3 Cat.A ix) segment_names;;
 
 module ZwiftSet = Set.Make(struct
     type t = Results_t.rider_result
@@ -83,11 +78,12 @@ end);;
 
 let zwifters = Array.make 5 ZwiftSet.empty;;
 
-Array.iter (fun cats ->
-    List.iter (fun zwifter ->
-            zwifters.(int_of_category zwifter.r_category) <- ZwiftSet.add zwifter zwifters.(int_of_category zwifter.r_category))
-        cats)
-    race.race_results;;
+let () =
+    Array.iter (fun cats ->
+        List.iter (fun zwifter ->
+                zwifters.(int_of_category zwifter.r_category) <- ZwiftSet.add zwifter zwifters.(int_of_category zwifter.r_category))
+            cats)
+       race.race_results;;
 
 let upgraded cat1 cat2 = ZwiftSet.inter zwifters.(cat1) zwifters.(cat2);;
 
@@ -102,31 +98,37 @@ type points_data = {
     points_category : Category.t;
 }
 
-let points = Hashtbl.create (List.fold_left (+) 0 num_riders);;
-
-(*
-let get_points_rider zwiftid = match Hashtbl.find_opt with
-    | Some zwifter -> zwifter
-    | None ->
-        let points_zwifter = {
-            zwiftid = zwiftid;
-
-        }
-*)
-
-(* this currently only gives us segment results for a single category *)
-let segment_results category =
-    let results = Array.make (List.length segment_names) SprintSet.empty in
-    List.iteri (fun index segment ->
-        List.iter (fun rider ->
-            sprint_segment := segment;
-            results.(index) <- SprintSet.add rider results.(index)) sprints.sprint_results.(int_of_category category))
-        segment_names;
-    Array.map SprintSet.elements results;;
-
 let cat_a_sprints = segment_results Cat.A;;
 let sprint_1 = cat_a_sprints.(0);;
-List.iteri (fun ix elt -> Printf.printf "%d: %s - %f\n" (succ ix) elt.s_name (Hashtbl.find elt.s_msec (List.hd segment_names))) sprint_1;;
+List.iteri (fun ix elt -> Printf.printf "%d: %s - %f\n" (succ ix) elt.sprint_rider.s_name (Hashtbl.find elt.sprint_rider.s_msec (List.hd segment_names))) sprint_1;;
+
+type rider_data_t = {
+    rider_id : int; (* zwid *)
+    mutable completed_races : int;
+    mutable race_points : int list;
+    mutable sprint_points : int list;
+    mutable race_category : Cat.t;
+}
+
+let position_to_points position = function
+    | n when n <= 5 -> List.nth [10; 7; 5; 3; 1] (position - 1)
+    | n when n <= 10 -> List.nth [18; 15; 13; 11; 9; 7; 5; 3; 2; 1] (position - 1)
+    | n when n <= 15 -> List.nth [26; 23; 21; 19; 17; 15; 13; 11; 9; 7; 5; 4; 3; 2; 1] (position - 1)
+    | n when n <= 20 -> List.nth [34; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 9; 7; 6; 5; 4; 3; 2; 1] (position - 1)
+    | n when n <= 25 -> List.nth [42; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
+    | n when n <= 30 -> List.nth [50; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
+    | n when n <= 35 -> List.nth [58; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
+    | n when n <= 40 -> List.nth [66; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
+    | n when n <= 45 -> List.nth [74; 71; 69; 67; 65; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
+    | n when position <= 50 -> List.nth [82; 79; 77; 75; 73; 71; 69; 67; 65; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 18; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
+    | _ -> 1
+
+let best_results rider =
+    let rec take = function
+    | _, 0 -> []
+    | [], _ -> []
+    | x::xs, n -> x :: take (xs, n-1)
+    in take (List.rev (List.sort compare rider.race_points), 6);;
 
 (*
 type event_id = string;;
@@ -157,43 +159,9 @@ type event = {
     mutable total_participants : int;
 }
 
-let race_categories = ["A"; "B"; "C"; "D"; "E"];;
-
-let events : (event_key, event) Hashtbl.t = Hashtbl.create 40;;
-let racers : (racer_id, racer) Hashtbl.t = Hashtbl.create 40;;
-let categories = Hashtbl.create 5;;
-
-let results_ic = Csv.of_channel (open_in "temp/results.csv");;
-let sprints_ic = Csv.of_channel (open_in "temp/sprints.csv");;
-
-let position_to_points position = function
-    | n when n <= 5 -> List.nth [10; 7; 5; 3; 1] (position - 1)
-    | n when n <= 10 -> List.nth [18; 15; 13; 11; 9; 7; 5; 3; 2; 1] (position - 1)
-    | n when n <= 15 -> List.nth [26; 23; 21; 19; 17; 15; 13; 11; 9; 7; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 20 -> List.nth [34; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 9; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 25 -> List.nth [42; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 30 -> List.nth [50; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 35 -> List.nth [58; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 40 -> List.nth [66; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 45 -> List.nth [74; 71; 69; 67; 65; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when position <= 50 -> List.nth [82; 79; 77; 75; 73; 71; 69; 67; 65; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 18; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | _ -> 1
-
-let top_6_positions positions =
-    let rec take = function
-    | _, 0 -> []
-    | [], _ -> []
-    | x::xs, n -> x :: take (xs, n-1)
-    in take (List.sort (fun left right -> -(compare left right)) positions, 6);;
-
 let rider_points all_points = List.fold_left (+) 0 (top_6_positions all_points);;
 let total_points r = rider_points r.rpoints + r.sprints;;
 
-let get_field f pos list = match List.nth_opt list pos with Some x -> f x | None -> "";;
-let get_name list pos = get_field (fun r -> r.rname) pos list;;
-let get_races list pos = get_field (fun r -> string_of_int (List.length r.rpoints)) pos list;;
-let get_sprints list pos = get_field (fun r -> string_of_int r.sprints) pos list;;
-let get_total list pos = get_field (fun r -> string_of_int (total_points r)) pos list;;
 
 let () =
     (* columns needed: zid, position_in_cat, category, name
