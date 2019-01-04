@@ -48,6 +48,16 @@ let post url data =
     Curl.cleanup c;
     rc, (Buffer.contents buf);;
 
+let get_url url oc =
+    let c = Curl.init () in
+    Curl.set_writefunction c (fun s -> output_string oc s; String.length s);
+    Curl.set_url c url;
+    Curl.set_cookiejar c "zwiftpower.cookies";
+    Curl.set_cookiefile c "zwiftpower.cookies";
+    Curl.perform c;
+    Curl.cleanup c;
+    close_out oc;;
+
 let edit_riders event_id riders =
     let format rider =
         Printf.sprintf "%s, %s, %d, %s, %d, %s, %d, %s"
@@ -67,6 +77,38 @@ let read_file name =
 	let ic = open_in name in
 	let length = in_channel_length ic in
 	really_input_string ic length
+
+let race_from_channel ic =
+    Atdgen_runtime.Util.Json.from_channel Results_j.read_race ic;;
+
+let sprints_from_channel ic =
+    Atdgen_runtime.Util.Json.from_channel Results_j.read_sprints ic;;
+
+let unlink file =
+    try
+        Unix.unlink file
+    with e -> print_endline (Printexc.to_string e);;
+
+let results_prior_to_event zwift_id event_id =
+    unlink "jq.fifo";
+    unlink "atd.fifo";
+    Unix.mkfifo "jq.fifo" 0o644;
+    Unix.mkfifo "atd.fifo" 0o644;
+    let url = Printf.sprintf "https://www.zwiftpower.com/api3.php?do=profile_results&z=%d&type=all" zwift_id in
+    let jq = Printf.sprintf ".data | sort_by(.event_date) | reverse | until(.[0].zid == \"%d\" or length == 0; . - [.[0]]) | .[1:31] | { data: . }" event_id in
+    let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
+    Unix.create_process "jq" [|"--unbuffered"; jq; "jq.fifo"|] Unix.stdin out_fd Unix.stdout;
+    get_url url (open_out "jq.fifo");
+    Unix.close out_fd;
+    let ic = open_in "atd.fifo" in
+    let results = race_from_channel ic in
+    close_in ic;
+    unlink "atd.fifo";
+    unlink "jq.fifo";
+    results
+;;
+
+let test () = results_prior_to_event 653395 124741;;
 
 (* this is only data for a single race, not a league... *)
 let race = Results_j.race_of_string (read_file "ages.results.json");;

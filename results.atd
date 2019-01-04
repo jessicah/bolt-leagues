@@ -49,6 +49,8 @@ type categorised_sprints = sprint_results list
 			arr"
 		unwrap="fun arr -> List.concat (Array.to_list arr)">
 
+type json <ocaml module="Yojson.Safe"> = abstract
+
 type rider_result = {
 	ftp : int_option_as_string;
 	friend: bool_as_int;
@@ -90,8 +92,8 @@ type rider_result = {
 	zada: bool_as_int;
 	note: string;
 	division: int;
-	skill: int_with_commas;
-	skill_gain: int;
+	skill: json;
+	skill_gain: json;
 	np: int list_as_singleton;
 	hrr: float list_as_singleton;
 	hreff: int list_as_singleton;
