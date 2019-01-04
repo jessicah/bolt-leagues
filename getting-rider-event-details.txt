@@ -1,0 +1,15 @@
+## get rider date from zwiftpower (z == rider id)
+curl 'https://www.zwiftpower.com/api3.php?do=profile_results&z=653395&type=all' > rider_data.json
+
+## get average power for last 30 events
+cat rider_data.json | jq -C '[.data[] | {wkg_ftp: .wkg_ftp[0] |tonumber, date: .event_date}] | sort_by(.date) | reverse | .[0:30] | [.[].wkg_ftp] | add/length
+
+## get maximum power from last 30 events
+cat rider_data.json | jq -C '[.data[] | {wkg_ftp: .wkg_ftp[0] |tonumber, date: .event_date}] | sort_by(.date) | reverse | .[0:30] | [.[].wkg_ftp] | max
+
+## get events in the last 30 days
+#  1543811749 == Unix.time - (60 * 60 * 24 * 30)
+cat rider_data.json | jq -C '[.data[] | {wkg_ftp: .wkg_ftp[0] |tonumber, date: .event_date}] | sort_by(.date) | reverse | map(select(.date >= 1543811749))'
+
+## get events, more detailed, example is for last 30 rides
+cat rider_data.json | jq -C '[.data[] | {title: .event_title, name: .name, avg_power: .avg_power[0], avg_wkg: .avg_wkg[0], wkg_ftp: .wkg_ftp[0] | tonumber, wftp: .wftp[0], zid: .zid | tonumber, date: .event_date}] | sort_by(.date) | reverse | .[0:30]'
