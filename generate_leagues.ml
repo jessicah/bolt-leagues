@@ -2,14 +2,66 @@
 
 #use "topfind";;
 #require "atdgen";;
+#require "curl";;
 #load "category.cmo";;
 #load "results_j.cmo";;
+#load "unix.cma";;
 
 open Results_t;;
 module Cat = Category;;
 
+module List = struct
+    include List
+
+    let rec take n list = match n, list with
+    | 0, _ | _, [] -> []
+    | _, x::xs -> x :: take (n-1) xs
+end;;
+
 let int_of_category = Category.int_of_category;;
 let num_categories = 5;;
+
+type edited_rider_t = {
+    e_category: Cat.t;
+    e_flag: string;
+    e_power_type: int;
+    e_name: string;
+    e_zwid: int;
+    e_uid: string;
+    e_penalty: int;
+    e_notes: string;
+}
+
+let post url data =
+    let buf = Buffer.create 80 in
+    let c = Curl.init () in
+    Curl.set_verbose c true;
+    Curl.set_writefunction c (fun s -> Buffer.add_string buf s; String.length s);
+    Curl.set_url c url;
+    Curl.set_cookiejar c "zwiftpower.cookies";
+    Curl.set_cookiefile c "zwiftpower.cookies";
+    Curl.set_httpheader c ["Content-Type: application/x-www-form-urlencoded"];
+    Curl.set_postfields c data;
+    Curl.set_postfieldsize c (String.length data);
+    Curl.perform c;
+    let rc = Curl.get_responsecode c in
+    Curl.cleanup c;
+    rc, (Buffer.contents buf);;
+
+let edit_riders event_id riders =
+    let format rider =
+        Printf.sprintf "%s, %s, %d, %s, %d, %s, %d, %s"
+            (Cat.unwrap rider.e_category) rider.e_flag rider.e_power_type rider.e_name
+            rider.e_zwid rider.e_uid rider.e_penalty rider.e_notes;
+    in
+    let data = String.concat "\n" (List.map format riders) in
+    post
+        "https://www.zwiftpower.com/ucp.php?mode=login"
+        (Printf.sprintf "username=jessica.l.hamilton@gmail.com&password=%s&autologin=1&redirect=./index.php?&login="
+            (Unix.getenv "ZP_PASSWORD"));
+    post
+        (Printf.sprintf "https://www.zwiftpower.com/zz.php?do=edit_results&act=save&zwift_event_id=%d" event_id)
+        ("edit_results=" ^ data);;
 
 let read_file name =
 	let ic = open_in name in
@@ -85,10 +137,14 @@ let () =
             cats)
        race.race_results;;
 
-let upgraded cat1 cat2 = ZwiftSet.inter zwifters.(cat1) zwifters.(cat2);;
+let upgraded cat1 cat2 = ZwiftSet.inter zwifters.(int_of_category cat1) zwifters.(int_of_category cat2);;
 
-let above_limits lim zwifters =
-    ZwiftSet.filter (fun zwifter -> zwifter.r_avg_wkg > lim) zwifters;;
+let upgraded_list cat1 cat2 = ZwiftSet.elements (upgraded cat1 cat2);;
+
+let above_limits lim cat =
+    ZwiftSet.filter (fun zwifter -> zwifter.r_avg_wkg > lim) zwifters.(int_of_category cat);;
+
+let above_limits_list lim cat = ZwiftSet.elements (above_limits lim cat);;
 
 type points_data = {
     zwiftid : int;
@@ -110,18 +166,29 @@ type rider_data_t = {
     mutable race_category : Cat.t;
 }
 
-let position_to_points position = function
-    | n when n <= 5 -> List.nth [10; 7; 5; 3; 1] (position - 1)
-    | n when n <= 10 -> List.nth [18; 15; 13; 11; 9; 7; 5; 3; 2; 1] (position - 1)
-    | n when n <= 15 -> List.nth [26; 23; 21; 19; 17; 15; 13; 11; 9; 7; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 20 -> List.nth [34; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 9; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 25 -> List.nth [42; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 30 -> List.nth [50; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 35 -> List.nth [58; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 40 -> List.nth [66; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when n <= 45 -> List.nth [74; 71; 69; 67; 65; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | n when position <= 50 -> List.nth [82; 79; 77; 75; 73; 71; 69; 67; 65; 63; 61; 59; 57; 55; 53; 51; 49; 47; 45; 43; 41; 39; 37; 35; 33; 31; 29; 27; 25; 23; 21; 19; 18; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3; 2; 1] (position - 1)
-    | _ -> 1
+module IntsDesc = Set.Make(struct type t = int let compare left right = compare right left end);;
+
+let points = List.map IntsDesc.of_list [
+    [9; 7; 5; 3; 1];
+    [17; 15; 13; 11; 2];
+    [25; 23; 21; 19; 4];
+    [33; 31; 29; 27; 6];
+    [41; 39; 37; 35; 8];
+    [49; 47; 45; 43; 10];
+    [57; 55; 53; 51; 12];
+    [65; 63; 61; 59; 14];
+    [73; 71; 69; 67; 16];
+    [81; 79; 77; 75; 18];
+]
+
+let position_to_points position participants =
+    if position > participants then raise (Invalid_argument "position cannot exceed participants");
+    let bonus = if position = 1 then 1 else 0 in
+    let position = position - 1 in
+    let points = List.fold_left IntsDesc.union IntsDesc.empty (List.take ((participants-1) / 5 + 1) points) in
+    match List.nth_opt (IntsDesc.elements points) position with
+    | None -> 1
+    | Some i -> i + bonus;;
 
 let best_results rider =
     let rec take = function
@@ -129,6 +196,44 @@ let best_results rider =
     | [], _ -> []
     | x::xs, n -> x :: take (xs, n-1)
     in take (List.rev (List.sort compare rider.race_points), 6);;
+
+let contains_substring pat str =
+    let rec search i j =
+        if j >= String.length pat then true
+        else if i + j >= String.length str then false
+        else if str.[i + j] = pat.[j] then search i (j+1)
+        else search (i+1) 0
+    in search 0 0;;
+
+let filenames dirname =
+    let handle = Unix.opendir dirname in
+    let rec loop (results, sprints) = try
+            let filename = Unix.readdir handle in
+            match filename with
+            | "." | ".." -> loop (results, sprints)
+            | _ ->
+                if contains_substring ".results.json" filename then
+                    loop (filename::results, sprints)
+                else if contains_substring ".sprints.json" filename then
+                    loop (results, filename::sprints)
+                else begin
+                    print_endline ("warning: unsupported filename: " ^ filename);
+                    loop (results, sprints)
+                end
+        with End_of_file ->
+            Unix.closedir handle;
+            (results, sprints)
+    in loop ([], []);;
+
+(* we have temp/ages, temp/crit, temp/irongoat, and temp/tt leagues *)
+
+(* ages: each grade is based solely on age *)
+(* crit: each grade is based on FTP W/kg *)
+(* irongoat: each grade is based on FTP W/kg *)
+(* tt: single grade *)
+
+(* another thing we need to do is regenerate the final standings for each race *)
+
 
 (*
 type event_id = string;;
