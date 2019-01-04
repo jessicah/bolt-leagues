@@ -13,3 +13,6 @@ cat rider_data.json | jq -C '[.data[] | {wkg_ftp: .wkg_ftp[0] |tonumber, date: .
 
 ## get events, more detailed, example is for last 30 rides
 cat rider_data.json | jq -C '[.data[] | {title: .event_title, name: .name, avg_power: .avg_power[0], avg_wkg: .avg_wkg[0], wkg_ftp: .wkg_ftp[0] | tonumber, wftp: .wftp[0], zid: .zid | tonumber, date: .event_date}] | sort_by(.date) | reverse | .[0:30]'
+
+## get last 30 events before given event
+cat rider_data.json | jq '.data | sort_by(.event_date) | . as $input | {} as $results | reverse | until(.[0].zid == "'$zwift_event_id'"; . - [.[0]]) | .[1:31]'
