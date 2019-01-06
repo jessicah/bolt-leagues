@@ -33,7 +33,7 @@ type 'v list_as_singleton = 'v list
 
 type categorised_results = rider_result list
 	wrap <ocaml t="rider_result list array"
-		wrap="fun riders -> let arr = Array.make 5 [] in
+		wrap="fun riders -> let arr = Array.make 6 [] in
 			List.iter (fun rider ->
 				let ix = Category.int_of_category rider.r_category in
 				arr.(ix) <- rider :: arr.(ix)) riders;
@@ -42,10 +42,19 @@ type categorised_results = rider_result list
 
 type categorised_sprints = sprint_results list
 	wrap <ocaml t="sprint_results list array"
-		wrap="fun riders -> let arr = Array.make 5 [] in
+		wrap="fun riders -> let arr = Array.make 6 [] in
 			List.iter (fun rider ->
 				let ix = Category.int_of_category rider.s_category in
 				arr.(ix) <- rider :: arr.(ix)) riders;
+			arr"
+		unwrap="fun arr -> List.concat (Array.to_list arr)">
+
+type categorised_placings = placing list
+	wrap <ocaml t="placing list array"
+		wrap="fun placings -> let arr = Array.make 6 [] in
+			List.iter (fun placing ->
+				let ix = Category.int_of_category placing.p_category in
+				arr.(ix) <- placing :: arr.(ix)) placings;
 			arr"
 		unwrap="fun arr -> List.concat (Array.to_list arr)">
 
@@ -177,4 +186,46 @@ type sprint_results = {
 
 type sprints = {
 	sprint_results <json name="data">: categorised_sprints;
+}
+
+type placing = {
+	zid: string;
+	pos: int;
+	position_in_cat: int;
+	name: string;
+	zwid: string;
+	res_id: string;
+	aid: string;
+	event_date: int nullable;
+	event_title: string nullable;
+	lag: int;
+	time: float;
+	time_gun: float;
+	gap: float;
+	male: bool;
+	tid: string;
+	tname: string;
+	category: category_as_string;
+	flag: string;
+	avg_hr: int;
+	max_hr: int;
+	hrm: bool;
+	power_type: int;
+	display_pos: int;
+	zada: bool;
+	avg_power: int;
+	avg_wkg: float;
+	wkg_ftp: float;
+	wftp: int;
+	wkg_guess: bool;
+	is_guess: bool;
+	upg: bool;
+	penalty: int;
+	reg: bool;
+	pts: int;
+	pts_pos: int;
+} <ocaml field_prefix="p_">
+
+type placings = {
+	placings <json name="data">: categorised_placings;
 }

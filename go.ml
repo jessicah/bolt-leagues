@@ -6,6 +6,7 @@
 #load "category.cmo";;
 #load "results_j.cmo";;
 #load "unix.cma";;
+#load "utils.cmo";;
 
 open Results_t;;
 module Cat = Category;;
@@ -37,112 +38,15 @@ type edited_rider_t = {
     e_notes: string;
 }
 
-let post url data =
-    let buf = Buffer.create 80 in
-    let c = Curl.init () in
-    Curl.set_verbose c true;
-    Curl.set_writefunction c (fun s -> Buffer.add_string buf s; String.length s);
-    Curl.set_url c url;
-    Curl.set_cookiejar c "zwiftpower.cookies";
-    Curl.set_cookiefile c "zwiftpower.cookies";
-    Curl.set_httpheader c ["Content-Type: application/x-www-form-urlencoded"];
-    Curl.set_postfields c data;
-    Curl.set_postfieldsize c (String.length data);
-    Curl.perform c;
-    let rc = Curl.get_responsecode c in
-    Curl.cleanup c;
-    rc, (Buffer.contents buf);;
-
-let get_url url oc =
-    let c = Curl.init () in
-    Curl.set_writefunction c (fun s -> output_string oc s; String.length s);
-    Curl.set_url c url;
-    Curl.set_cookiejar c "zwiftpower.cookies";
-    Curl.set_cookiefile c "zwiftpower.cookies";
-    Curl.perform c;
-    Curl.cleanup c;
-    close_out oc;;
+let format_edit rider =
+    Printf.sprintf "%s, %s, %d, %s, %d, %s, %d, %s"
+        (Cat.unwrap rider.e_category) rider.e_flag rider.e_power_type rider.e_name
+        rider.e_zwid rider.e_uid rider.e_penalty rider.e_notes
+;;
 
 let edit_riders event_id riders =
-    let format rider =
-        Printf.sprintf "%s, %s, %d, %s, %d, %s, %d, %s"
-            (Cat.unwrap rider.e_category) rider.e_flag rider.e_power_type rider.e_name
-            rider.e_zwid rider.e_uid rider.e_penalty rider.e_notes;
-    in
-    let data = String.concat "\n" (List.map format riders) in
-    post
-        "https://www.zwiftpower.com/ucp.php?mode=login"
-        (Printf.sprintf "username=jessica.l.hamilton@gmail.com&password=%s&autologin=1&redirect=./index.php?&login="
-            (Unix.getenv "ZP_PASSWORD"));
-    post
-        (Printf.sprintf "https://www.zwiftpower.com/zz.php?do=edit_results&act=save&zwift_event_id=%d" event_id)
-        ("edit_results=" ^ data);;
-
-let read_file name =
-	let ic = open_in name in
-	let length = in_channel_length ic in
-	really_input_string ic length
-
-let race_from_channel ic =
-    Atdgen_runtime.Util.Json.from_channel Results_j.read_race ic;;
-
-let sprints_from_channel ic =
-    Atdgen_runtime.Util.Json.from_channel Results_j.read_sprints ic;;
-
-let unlink file =
-    try
-        Unix.unlink file
-    with
-    | Unix.Unix_error(Unix.ENOENT, "unlink", _) -> ()
-    | e -> print_endline (Printexc.to_string e);;
-
-let read_all ic =
-    let buffer = Buffer.create 1024 in
-    let rec loop () =
-        let bytes = Bytes.create 1024 in
-        let num = input ic bytes 0 1024 in
-        if num > 0 then begin
-            Buffer.add_bytes buffer (Bytes.sub bytes 0 num);
-            loop ()
-        end
-    in loop ();
-    Buffer.contents buffer
-;;
-
-let results_prior_to_event zwift_id event_id =
-    unlink "jq.fifo";
-    unlink "atd.fifo";
-    Unix.mkfifo "jq.fifo" 0o644;
-    Unix.mkfifo "atd.fifo" 0o644;
-    let url = Printf.sprintf "https://www.zwiftpower.com/api3.php?do=profile_results&z=%d&type=all" zwift_id in
-    let jq = Printf.sprintf ".data | sort_by(.event_date) | reverse | until(.[0].zid == \"%d\" or length == 0; . - [.[0]]) | .[1:31] | { data: . }" event_id in
-    let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-    Unix.create_process "jq" [|"--unbuffered"; jq; "jq.fifo"|] Unix.stdin out_fd Unix.stdout;
-    get_url url (open_out "jq.fifo");
-    Unix.close out_fd;
-    let ic = open_in "atd.fifo" in
-    let results = race_from_channel ic in
-    close_in ic;
-    unlink "atd.fifo";
-    unlink "jq.fifo";
-    results
-;;
-
-let fetch_placings url =
-    unlink "jq.fifo";
-    unlink "atd.fifo";
-    Unix.mkfifo "jq.fifo" 0o644;
-    Unix.mkfifo "atd.fifo" 0o644;
-    let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-    Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout;
-    get_url url (open_out "jq.fifo");
-    Unix.close out_fd;
-    let ic = open_in "atd.fifo" in
-    let results = Results_j.placings_of_string (read_all ic) in
-    close_in ic;
-    unlink "atd.fifo";
-    unlink "jq.fifo";
-    results
+    let data = String.concat "\n" (List.map format_edit riders) in
+    Utils.submit_results event_id data
 ;;
 
 let results_prior_to_event2 zwift_id event_id =
@@ -163,66 +67,9 @@ let test2 l =
     List.map (fun p -> p.p_event_title, p.p_event_date, p.p_zid)
         l;;
 
-(*let curl_to_results url =
-    let (inpipe, outpipe) = Unix.pipe () in
-    let ic, oc = Unix.in_channel_of_descr inpipe, Unix.out_channel_of_descr outpipe in
-    get_url url oc;
-    Unix.close outpipe;
-    let results = race_from_channel ic in
-    Unix.close inpipe;
-    results;;*)
-
-(*let get_url url fd =
-    let c = Curl.init () in
-    Curl.set_writefunction c (fun s ->
-        let b = Bytes.of_string s in
-        Unix.write fd b 0 (Bytes.length b));
-    Curl.set_url c url;
-    Curl.set_cookiejar c "zwiftpower.cookies";
-    Curl.set_cookiefile c "zwiftpower.cookies";
-    Curl.perform c;
-    Curl.cleanup c;
-    Unix.close fd;;
-
-let curl_to_results url =
-    (* so to use a FIFO, we have to be simultaneously reading & writing, so need to use threads *)
-    let fifo = "curl.FIFO" in
-    unlink fifo;
-    Unix.mkfifo fifo 0o644;
-    let fd = Unix.openfile fifo [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-    let thr = Thread.create (fun fd ->
-        get_url url fd) fd in
-    print_endline "opening fifo for reading";
-    let ic = Unix.in_channel_of_descr fd in
-    print_endline "opened for reading";
-    Thread.wait_read fd;
-    let results = race_from_channel ic in
-    print_endline "processed results";
-    close_in ic;
-    Thread.join thr;
-    print_endline "closed ic";
-    unlink fifo;
-    print_endline "done";
-    results;;*)
-
-let curl_to_results url =
-    let buffer = Buffer.create 16384 in
-    let curl = Curl.init () in
-    Curl.set_writefunction curl (fun string ->
-        Buffer.add_string buffer string;
-        String.length string);
-    Curl.set_url curl url;
-    Curl.set_cookiejar curl "zwiftpower.cookies";
-    Curl.set_cookiefile curl "zwiftpower.cookies";
-    Curl.perform curl;
-    Curl.cleanup curl;
-    Results_j.race_of_string (Buffer.contents buffer);;
-
-let test () = results_prior_to_event 653395 124741;;
-
 (* this is only data for a single race, not a league... *)
-let race = Results_j.race_of_string (read_file "ages.results.json");;
-let sprints = Results_j.sprints_of_string (read_file "ages.sprints.json");;
+let race = Results_j.race_of_string (Utils.read_file "ages.results.json");;
+let sprints = Results_j.sprints_of_string (Utils.read_file "ages.sprints.json");;
 
 let categories = [|Cat.A; Cat.B; Cat.C; Cat.D; Cat.E|];;
 
