@@ -111,7 +111,7 @@ let results_prior_to_event zwift_id event_id =
             last30
     in
     (*let placings = List.take_while (fun p -> p.p_zid <> event_id) (List.rev placings) in*)
-    let placings = take_until (fun p -> p.p_zid = event_id) (List.rev placings) in
+    let placings = List.take_until (fun p -> p.p_zid = event_id) (List.rev placings) in
     let placings = List.take 30 (List.rev placings) in
     placings
 ;;
@@ -135,7 +135,7 @@ let cats_for_placings placings event_id =
             {
                 placing
                     with
-                p_category = power_to_cat (List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) results).p_wkg_ftp
+                p_category = power_to_cat (max (List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) results).p_wkg_ftp placing.p_wkg_ftp)
             }
         with
         | Failure "empty list" -> { placing with p_category = power_to_cat placing.p_wkg_ftp }

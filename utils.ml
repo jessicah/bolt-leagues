@@ -48,7 +48,11 @@ let submit_results event_id data =
             Unix.getenv "ZP_PASSWORD"
         with Not_found ->
             print_string "enter password: ";
-            read_line();
+            let tio = Unix.tcgetattr Unix.stdout in
+            Unix.tcsetattr Unix.stdout Unix.TCSANOW { tio with c_echo = false };
+            let pw = read_line() in
+            Unix.tcsetattr Unix.stdout Unix.TCSANOW tio;
+            pw
     in
     post "https://www.zwiftpower.com/ucp.php?mode=login"
         (Printf.sprintf "username=jessica.l.hamilton@gmail.com&password=%s&autologin=1&redirect=./index.php?&login="
