@@ -44,9 +44,15 @@ let get url oc =
         ("edit_results=" ^ data);;*)
 
 let submit_results event_id data =
+    let password = try
+            Unix.getenv "ZP_PASSWORD"
+        with Not_found ->
+            print_string "enter password: ";
+            read_line();
+    in
     post "https://www.zwiftpower.com/ucp.php?mode=login"
         (Printf.sprintf "username=jessica.l.hamilton@gmail.com&password=%s&autologin=1&redirect=./index.php?&login="
-            (Unix.getenv "ZP_PASSWORD"));
+            password);
     post
         (Printf.sprintf "https://www.zwiftpower.com/zz.php?do=edit_results&act=save&zwift_event_id=%d" event_id)
         ("edit_results=" ^ data)
@@ -79,21 +85,33 @@ let unlink file =
     | e -> print_endline (Printexc.to_string e)
 ;;
 
-let fetch_placings url =
-    unlink "jq.fifo";
-    unlink "atd.fifo";
-    Unix.mkfifo "jq.fifo" 0o644;
-    Unix.mkfifo "atd.fifo" 0o644;
-    let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-    Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout;
-    get url (open_out "jq.fifo");
-    Unix.close out_fd;
-    let ic = open_in "atd.fifo" in
-    let results = Results_j.placings_of_string (read_all ic) in
-    close_in ic;
-    unlink "atd.fifo";
-    unlink "jq.fifo";
-    results
+let rec fetch_placings url n =
+    if n = 0 then failwith "retry exceeded";
+    begin try
+        unlink "jq.fifo";
+        unlink "atd.fifo";
+        Unix.mkfifo "jq.fifo" 0o644;
+        Unix.mkfifo "atd.fifo" 0o644;
+        let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
+        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout;
+        get url (open_out "jq.fifo");
+        Unix.close out_fd;
+        let ic = open_in "atd.fifo" in
+        let results = Results_j.placings_of_string (read_all ic) in
+        close_in ic;
+        unlink "atd.fifo";
+        unlink "jq.fifo";
+        results
+    with exn ->
+        fetch_placings url (n-1)
+    end
+;;
+
+let fetch_placings url = fetch_placings url 10
+;;
+
+let flatten_placings placings =
+    List.concat (Array.to_list placings.Results_j.placings)
 ;;
 
 let contains_substring pat str =
@@ -124,4 +142,38 @@ let filenames dirname =
             Unix.closedir handle;
             (results, sprints)
     in loop ([], [])
+;;
+
+let utf8encode s =
+    let prefs = [| 0x0; 0xc0; 0xe0 |] in
+    let s1 n = String.make 1 (Char.chr n) in
+    let rec ienc k sofar resid =
+        let bct = if k = 0 then 7 else 6 - k in
+        if resid < 1 lsl bct then
+            (s1 (prefs.(k) + resid)) ^ sofar
+        else
+            ienc (k + 1) (s1 (0x80 + resid mod 64) ^ sofar) (resid / 64)
+    in
+    ienc 0 "" (int_of_string s)
+
+let replace_escapes s =
+    let re = Str.regexp "&#[0-9]+;" in
+    let subst = function
+    | Str.Delim u -> utf8encode (String.sub u 2 4)
+    | Str.Text t -> t
+    in
+    String.concat "" (List.map subst (Str.full_split re s))
+;;
+
+let html_map = [
+    "&lt;", "<";
+    "&gt;", ">";
+    "&amp;", "&";
+];;
+
+let replace_escapes s =
+    let s = replace_escapes s in
+    List.fold_left (fun s (sym,txt) ->
+            Str.global_replace (Str.regexp_string sym) txt s)
+        s html_map
 ;;

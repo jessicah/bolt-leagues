@@ -33,7 +33,7 @@ type 'v list_as_singleton = 'v list
 
 type categorised_results = rider_result list
 	wrap <ocaml t="rider_result list array"
-		wrap="fun riders -> let arr = Array.make 6 [] in
+		wrap="fun riders -> let arr = Array.make 7 [] in
 			List.iter (fun rider ->
 				let ix = Category.int_of_category rider.r_category in
 				arr.(ix) <- rider :: arr.(ix)) riders;
@@ -42,7 +42,7 @@ type categorised_results = rider_result list
 
 type categorised_sprints = sprint_results list
 	wrap <ocaml t="sprint_results list array"
-		wrap="fun riders -> let arr = Array.make 6 [] in
+		wrap="fun riders -> let arr = Array.make 7 [] in
 			List.iter (fun rider ->
 				let ix = Category.int_of_category rider.s_category in
 				arr.(ix) <- rider :: arr.(ix)) riders;
@@ -51,7 +51,7 @@ type categorised_sprints = sprint_results list
 
 type categorised_placings = placing list
 	wrap <ocaml t="placing list array"
-		wrap="fun placings -> let arr = Array.make 6 [] in
+		wrap="fun placings -> let arr = Array.make 7 [] in
 			List.iter (fun placing ->
 				let ix = Category.int_of_category placing.p_category in
 				arr.(ix) <- placing :: arr.(ix)) placings;
@@ -196,6 +196,7 @@ type placing = {
 	zwid: string;
 	res_id: string;
 	aid: string;
+	uid: string;
 	event_date: int nullable;
 	event_title: string nullable;
 	lag: int;
@@ -205,6 +206,9 @@ type placing = {
 	male: bool;
 	tid: string;
 	tname: string;
+	tc: string;
+	tbc: string;
+	tbd: string;
 	category: category_as_string;
 	flag: string;
 	avg_hr: int;

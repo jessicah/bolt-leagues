@@ -3,6 +3,7 @@
 #use "topfind";;
 #require "atdgen";;
 #require "curl";;
+#require "str";;
 #load "category.cmo";;
 #load "results_j.cmo";;
 #load "unix.cma";;
@@ -22,50 +23,226 @@ module List = struct
     | x :: xs when p x -> x :: take_while p xs
     | _ :: xs -> []
     | [] -> []
+
+    let rec max_by p = function
+    | a :: b :: cs when p a b -> max_by p (a :: cs)
+    | a :: c :: cs -> max_by p (c :: cs)
+    | x :: [] -> x
+    | [] -> failwith "empty list"
+
+    let rec uniq_by p = function
+    | a :: b :: cs when p a b -> a :: uniq_by p cs
+    | x :: xs -> x :: uniq_by p xs
+    | [] -> []
 end;;
+
+module IntsDesc = Set.Make(struct type t = int let compare left right = compare right left end);;
+
+let points = List.map IntsDesc.of_list [
+    [9; 7; 5; 3; 1];
+    [17; 15; 13; 11; 2];
+    [25; 23; 21; 19; 4];
+    [33; 31; 29; 27; 6];
+    [41; 39; 37; 35; 8];
+    [49; 47; 45; 43; 10];
+    [57; 55; 53; 51; 12];
+    [65; 63; 61; 59; 14];
+    [73; 71; 69; 67; 16];
+    [81; 79; 77; 75; 18];
+]
+
+let position_to_points position participants =
+    if position > participants then raise (Invalid_argument "position cannot exceed participants");
+    let bonus = if position = 1 then 1 else 0 in
+    let position = position - 1 in
+    let points = List.fold_left IntsDesc.union IntsDesc.empty (List.take ((participants-1)/5) points) in
+    match List.nth_opt (IntsDesc.elements points) position with
+    | None -> 1
+    | Some i -> i + bonus;;
+
+(*let best_results rider =
+    let rec take = function
+    | _, 0 -> []
+    | [], _ -> []
+    | x::xs, n -> x :: take (xs, n-1)
+    in take (List.rev (List.sort compare rider.race_points), 6);;*)
 
 let int_of_category = Category.int_of_category;;
 let num_categories = 5;;
 
-type edited_rider_t = {
-    e_category: Cat.t;
-    e_flag: string;
-    e_power_type: int;
-    e_name: string;
-    e_zwid: int;
-    e_uid: string;
-    e_penalty: int;
-    e_notes: string;
-}
-
-let format_edit rider =
-    Printf.sprintf "%s, %s, %d, %s, %d, %s, %d, %s"
-        (Cat.unwrap rider.e_category) rider.e_flag rider.e_power_type rider.e_name
-        rider.e_zwid rider.e_uid rider.e_penalty rider.e_notes
+let format_place place =
+    Printf.sprintf "%s, %s, %d, %s, %s, %s, %d,"
+        (Cat.unwrap place.p_category) place.p_flag place.p_power_type place.p_name
+        place.p_zwid place.p_uid place.p_penalty
 ;;
 
-let edit_riders event_id riders =
-    let data = String.concat "\n" (List.map format_edit riders) in
-    Utils.submit_results event_id data
+let check_places places =
+    print_endline (Utils.replace_escapes (String.concat "\n" (List.map format_place places)))
 ;;
 
-let results_prior_to_event2 zwift_id event_id =
+let edit_places event_id places =
+    let data = Utils.replace_escapes (String.concat "\n" (List.map format_place places)) in
+    try
+        Str.search_forward (Str.regexp "&[a-z]+;") data 0;
+        print_endline data;
+        failwith "HTML entities found!"
+    with Not_found ->
+        Utils.submit_results event_id data
+;;
+
+let results_prior_to_event zwift_id event_id =
     let placings = Utils.fetch_placings (Printf.sprintf
-        "https://www.zwiftpower.com/api3.php?do=profile_results&z=%d&type=all" zwift_id)
+        "https://www.zwiftpower.com/api3.php?do=profile_results&z=%s&type=all" zwift_id)
     in
-    let placings1 = List.sort (fun p1 p2 ->
+    let placings = List.sort (fun p1 p2 ->
         match p1.p_event_date, p2.p_event_date with
         | Some d1, Some d2 -> compare d1 d2 | _ -> failwith "missing date") (List.concat (Array.to_list placings.placings))
     in
-    let placings2 = List.take_while (fun p -> p.p_zid <> event_id) placings1 in
-    let placings3 = List.take 30 (List.rev placings2) in
-    placings1, placings2, placings3
+    let placings = List.take_while (fun p -> p.p_zid <> event_id) placings in
+    let placings = List.take 30 (List.rev placings) in
+    placings
 ;;
 
-let test3 () = results_prior_to_event2 653395 "124741";;
-let test2 l =
-    List.map (fun p -> p.p_event_title, p.p_event_date, p.p_zid)
-        l;;
+let power_to_cat wkg =
+    if wkg >= 3.7 then Category.A
+    else if wkg >= 3.2 then Category.B
+    else if wkg >= 2.5 then Category.C
+    else Category.D
+;;
+
+let fetch_event event_id =
+    Utils.flatten_placings (Utils.fetch_placings (Printf.sprintf
+        "https://www.zwiftpower.com/api3.php?do=event_results&zid=%s" event_id))
+;;
+
+let cats_for_placings placings event_id =
+    List.map (fun placing ->
+        begin try
+            let results = results_prior_to_event placing.p_zwid event_id in
+            {
+                placing
+                    with
+                p_category = power_to_cat (List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) results).p_wkg_ftp
+            }
+        with
+        | Failure "empty list" -> { placing with p_category = power_to_cat placing.p_wkg_ftp }
+        | exn ->
+            Printf.printf "error processing results for %s\n" placing.p_zwid;
+            raise exn
+        end
+    ) placings
+;;
+
+let cats_for_event event_id = cats_for_placings (fetch_event event_id) event_id;;
+
+let sort_into_cats placings =
+    let arr = Array.make 7 [] in
+        List.iter (fun placing ->
+            let ix = Category.int_of_category placing.p_category in
+            arr.(ix) <- placing :: arr.(ix)) placings;
+        arr
+;;
+
+let points results =
+    let num_riders = Array.map List.length results in
+    Array.mapi (fun ix placings ->
+            List.map (fun placing ->
+                    Printf.printf "%d : %d = %d\n" placing.p_position_in_cat num_riders.(ix) (position_to_points placing.p_position_in_cat num_riders.(ix));
+                    placing, position_to_points placing.p_position_in_cat num_riders.(ix))
+                placings)
+        results
+;;
+
+type team_t = {
+    t_tname: string;
+    t_tc: string;
+    t_tbc: string;
+    t_tbd: string;
+    t_tid: string;
+}
+
+let team_of_placing p = {
+    t_tname = p.p_tname;
+    t_tc = p.p_tc;
+    t_tbc = p.p_tbc;
+    t_tbd = p.p_tbd;
+    t_tid = p.p_tid;
+}
+
+(* all_points : Results_t.placing list array list *)
+let team_points all_points =
+    let team_cats = Array.init 4 (fun _ -> Hashtbl.create 16) in
+    List.iter (fun race ->
+        Array.iteri (fun ix results ->
+            List.iter (fun (placing,points) ->
+                let team = team_of_placing placing in
+                let points = points + 1 in
+                if String.length team.t_tname > 0 then begin
+                    match Hashtbl.find_opt team_cats.(ix) team with
+                    | None -> Hashtbl.add team_cats.(ix) team (points,1)
+                    | Some (pts,evts) -> Hashtbl.replace team_cats.(ix) team ((pts+points),(evts+1))
+                end) results
+            ) race
+        ) all_points;
+    team_cats
+;;
+
+let best_points race1 race2 =
+    let cats = Array.map2 (fun a b -> List.concat [a;b]) race1 race2 in
+    let results = Array.map (fun results -> List.sort (fun (p1,s1) (p2,s2) ->
+            if p1.p_zwid = p2.p_zwid then begin
+                if s2 > s1 then 1
+                else if s1 = s2 then 0
+                else -1
+            end else if p1.p_zwid > p2.p_zwid then 1 else 0)
+        results) cats
+    in
+    Array.map (fun results -> List.sort (fun (_,s1) (_,s2) -> compare s2 s1) (List.uniq_by (fun a b ->
+        (fst a).p_zwid = (fst b).p_zwid) results)) results
+;;
+
+(*let round1 = best_points
+    (points (sort_into_cats (fetch_event "129382")))
+    (points (sort_into_cats (fetch_event "129383")));;*)
+
+let race1 = sort_into_cats (fetch_event "129382");;
+let race2 = sort_into_cats (fetch_event "129383");;
+
+let team = team_points [points race1; points race2];;
+
+let ix_to_string = function
+| 0 -> "A" | 1 -> "B" | 2 -> "C" | 3 -> "D" | _ -> "INV";;
+
+let print_table data =
+    Array.iteri (fun ix results ->
+        Printf.printf "Category %s\n" (ix_to_string ix);
+        List.iteri (fun iy (placing, points) ->
+                Printf.printf "%d. %s: %d\n" (iy+1) placing.p_name points)
+            results) data
+;;
+
+let print_csv data =
+    Printf.printf "category,events,points,tname,tc,tbc,tbd\n";
+    Array.iteri (fun ix results ->
+        List.iteri (fun iy (placing, points) ->
+                Printf.printf "%s,%d,%d,%s,%s,%s,%s\n"
+                    (Category.unwrap placing.p_category)
+                    1 points placing.p_tname placing.p_tc placing.p_tbc placing.p_tbd
+                )
+            results) data
+;;
+
+let print_team_csv data =
+    Printf.printf "category,events,points,tname,tc,tbc,tbd\n";
+    Array.iteri (fun ix results ->
+        List.iter (fun (team, (points, events)) ->
+            Printf.printf "%s,%d,%d,%s,%s,%s,%s\n"
+                    (ix_to_string ix)
+                    events points team.t_tname team.t_tc team.t_tbc team.t_tbd
+                )
+        (List.sort (fun a b -> compare (fst (snd b)) (fst (snd a))) (List.of_seq (Hashtbl.to_seq results)))
+    ) data
+;;
 
 (* this is only data for a single race, not a league... *)
 let race = Results_j.race_of_string (Utils.read_file "ages.results.json");;
@@ -165,36 +342,7 @@ type rider_data_t = {
     mutable race_category : Cat.t;
 }
 
-module IntsDesc = Set.Make(struct type t = int let compare left right = compare right left end);;
 
-let points = List.map IntsDesc.of_list [
-    [9; 7; 5; 3; 1];
-    [17; 15; 13; 11; 2];
-    [25; 23; 21; 19; 4];
-    [33; 31; 29; 27; 6];
-    [41; 39; 37; 35; 8];
-    [49; 47; 45; 43; 10];
-    [57; 55; 53; 51; 12];
-    [65; 63; 61; 59; 14];
-    [73; 71; 69; 67; 16];
-    [81; 79; 77; 75; 18];
-]
-
-let position_to_points position participants =
-    if position > participants then raise (Invalid_argument "position cannot exceed participants");
-    let bonus = if position = 1 then 1 else 0 in
-    let position = position - 1 in
-    let points = List.fold_left IntsDesc.union IntsDesc.empty (List.take ((participants-1) / 5 + 1) points) in
-    match List.nth_opt (IntsDesc.elements points) position with
-    | None -> 1
-    | Some i -> i + bonus;;
-
-let best_results rider =
-    let rec take = function
-    | _, 0 -> []
-    | [], _ -> []
-    | x::xs, n -> x :: take (xs, n-1)
-    in take (List.rev (List.sort compare rider.race_points), 6);;
 
 let contains_substring pat str =
     let rec search i j =

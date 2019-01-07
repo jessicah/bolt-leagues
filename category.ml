@@ -1,4 +1,4 @@
-type t = A | B | C | D | E | U
+type t = A | B | C | D | E | U | Flagged of string
 
 let wrap = function
 	| "A" -> A
@@ -7,7 +7,7 @@ let wrap = function
 	| "D" -> D
 	| "E" -> E
 	| "U" -> U
-	| _ -> failwith "invalid category"
+	| other -> Flagged other
 
 let unwrap = function
 	| A -> "A"
@@ -16,6 +16,7 @@ let unwrap = function
 	| D -> "D"
 	| E -> "E"
 	| U -> "U"
+	| Flagged other -> other
 
 let int_of_category = function
 	| A -> 0
@@ -24,5 +25,6 @@ let int_of_category = function
 	| D -> 3
 	| E -> 4
 	| U -> 5
+	| Flagged _ -> 6
 
-let categories = [| A | B | C | D | E | U |]
+let categories = [| A; B; C; D; E; U |]
