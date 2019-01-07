@@ -59,7 +59,7 @@ let position_to_points position participants =
     if position > participants then raise (Invalid_argument "position cannot exceed participants");
     let bonus = if position = 1 then 1 else 0 in
     let position = position - 1 in
-    let points = List.fold_left IntsDesc.union IntsDesc.empty (List.take ((participants-1)/5) points) in
+    let points = List.fold_left IntsDesc.union IntsDesc.empty (List.take (((participants-1)/5)+1) points) in
     match List.nth_opt (IntsDesc.elements points) position with
     | None -> 1
     | Some i -> i + bonus;;
@@ -91,7 +91,7 @@ let edit_places event_id places =
         print_endline data;
         failwith "HTML entities found!"
     with Not_found ->
-        Utils.submit_results event_id data
+        ignore (Utils.submit_results (int_of_string event_id) data)
 ;;
 
 let results_prior_to_event zwift_id event_id =
@@ -218,10 +218,10 @@ let best_points race1 race2 =
     (points (sort_into_cats (fetch_event "129382")))
     (points (sort_into_cats (fetch_event "129383")));;*)
 
-let race1 = sort_into_cats (fetch_event "129382");;
+(*let race1 = sort_into_cats (fetch_event "129382");;
 let race2 = sort_into_cats (fetch_event "129383");;
 
-let team = team_points [points race1; points race2];;
+let team = team_points [points race1; points race2];;*)
 
 let ix_to_string = function
 | 0 -> "A" | 1 -> "B" | 2 -> "C" | 3 -> "D" | _ -> "INV";;
@@ -235,12 +235,13 @@ let print_table data =
 ;;
 
 let print_csv data =
-    Printf.printf "category,events,points,tname,tc,tbc,tbd\n";
+    Printf.printf "category,events,points,tname,tc,tbc,tbd,name,flag\n";
     Array.iteri (fun ix results ->
         List.iteri (fun iy (placing, points) ->
-                Printf.printf "%s,%d,%d,%s,%s,%s,%s\n"
+                Printf.printf "%s,%d,%d,%s,%s,%s,%s,%s,%s\n"
                     (Category.unwrap placing.p_category)
                     1 points placing.p_tname placing.p_tc placing.p_tbc placing.p_tbd
+                    placing.p_name placing.p_flag
                 )
             results) data
 ;;
@@ -257,7 +258,46 @@ let print_team_csv data =
     ) data
 ;;
 
-(* this is only data for a single race, not a league... *)
+let rec ok prompt =
+    Printf.printf "%s: [y/N] " prompt;
+    match read_line () with
+    | "Y" | "y" | "yes" -> true
+    | "N" | "n" | "no" | "" -> false
+    | _ -> ok prompt
+;;
+
+let rec run () =
+    Printf.printf "Race 1: ";
+    let first = read_line () in
+    Printf.printf "Race 2: ";
+    let second = read_line () in
+    if ok "Fetch and update categories" then begin
+        let first_cats = cats_for_event first in
+        check_places first_cats;
+        if ok (Printf.sprintf "Submit categories for %s to ZwiftPower" first) then
+            edit_places first first_cats;
+        let second_cats = cats_for_event second in
+        check_places second_cats;
+        if ok (Printf.sprintf "Submit categories for %s to ZwiftPower" second) then
+            edit_places second second_cats;
+    end;
+    let first_race = points (sort_into_cats (fetch_event first)) in
+    let second_race = points (sort_into_cats (fetch_event second)) in
+    if ok (Printf.sprintf "Show table for %s" first) then
+        print_table first_race;
+    if ok (Printf.sprintf "Show table for %s" second) then
+        print_table second_race;
+    if ok (Printf.sprintf "Show table for individual points") then
+        print_table (best_points first_race second_race);
+    if ok (Printf.sprintf "Dump CSV for individual points") then
+        print_csv (best_points first_race second_race);
+    let team = team_points [first_race; second_race] in
+    if ok (Printf.sprintf "Dump CSV for team points") then
+        print_team_csv team;
+    Printf.printf "Complete!\n"
+;;
+
+(*(* this is only data for a single race, not a league... *)
 let race = Results_j.race_of_string (Utils.read_file "ages.results.json");;
 let sprints = Results_j.sprints_of_string (Utils.read_file "ages.sprints.json");;
 
@@ -537,4 +577,4 @@ let () =
     done;
     Csv.close_out standings_oc;
 ;;
-*)
+*)*)
