@@ -16,13 +16,17 @@ module List = struct
     include List
 
     let rec take n list = match n, list with
-    | -1, _ | _, [] -> []
+    | 0, _ | _, [] -> []
     | _, x::xs -> x :: take (n-1) xs
 
     let rec take_while p = function
     | x :: xs when p x -> x :: take_while p xs
     | _ :: xs -> []
     | [] -> []
+
+    let rec take_until p = function
+    | x :: xs when not (p x) -> x :: take_until p xs
+    | _ -> []
 
     let rec max_by p = function
     | a :: b :: cs when p a b -> max_by p (a :: cs)
@@ -98,7 +102,16 @@ let results_prior_to_event zwift_id event_id =
         match p1.p_event_date, p2.p_event_date with
         | Some d1, Some d2 -> compare d1 d2 | _ -> failwith "missing date") (List.concat (Array.to_list placings.placings))
     in
-    let placings = List.take_while (fun p -> p.p_zid <> event_id) placings in
+    (* last 30 days *)
+    let last30 = List.take_while (fun p -> p.p_event_date > (Some (int_of_float (Unix.time ()) - 2592000))) (List.rev placings) in
+    (* last 10 races if nothing in the past month *)
+    let placings = if last30 = [] then
+            List.take 10 (List.rev placings)
+        else
+            last30
+    in
+    (*let placings = List.take_while (fun p -> p.p_zid <> event_id) (List.rev placings) in*)
+    let placings = take_until (fun p -> p.p_zid = event_id) (List.rev placings) in
     let placings = List.take 30 (List.rev placings) in
     placings
 ;;
