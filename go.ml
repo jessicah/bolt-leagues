@@ -28,6 +28,14 @@ module List = struct
     | x :: xs when not (p x) -> x :: take_until p xs
     | _ -> []
 
+    let rec drop_while p = function
+    | x :: xs when p x -> drop_while p xs
+    | l -> l
+
+    let rec drop_until p = function
+    | x :: xs when not (p x) -> drop_until p xs
+    | l -> l
+
     let rec max_by p = function
     | a :: b :: cs when p a b -> max_by p (a :: cs)
     | a :: c :: cs -> max_by p (c :: cs)
@@ -38,6 +46,10 @@ module List = struct
     | a :: b :: cs when p a b -> a :: uniq_by p cs
     | x :: xs -> x :: uniq_by p xs
     | [] -> []
+
+    let hd_opt = function
+    | x :: _ -> Some x
+    | _ -> None
 end;;
 
 module IntsDesc = Set.Make(struct type t = int let compare left right = compare right left end);;
@@ -73,6 +85,17 @@ let position_to_points position participants =
 
 let int_of_category = Category.int_of_category;;
 let num_categories = 5;;
+
+let race_categories = [Cat.A; Cat.B; Cat.C; Cat.D];;
+
+let best_cat_results results =
+    match List.hd_opt
+        (List.drop_while ((=) [])
+            (List.map (fun cat ->
+                List.filter (fun p -> cat = p.p_category) results)
+                race_categories))
+    with None -> [] | Some x -> x
+;;
 
 let format_place place =
     Printf.sprintf "%s, %s, %d, %s, %s, %s, %d,"
@@ -116,12 +139,21 @@ let results_prior_to_event zwift_id event_id =
     placings
 ;;
 
-let power_to_cat wkg =
-    if wkg >= 3.7 then Category.A
-    else if wkg >= 3.2 then Category.B
-    else if wkg >= 2.5 then Category.C
-    else Category.D
-;;
+module Women = struct
+    let power_to_cat wkg =
+        if wkg >= 3.7 then Category.A
+        else if wkg >= 3.2 then Category.B
+        else if wkg >= 2.5 then Category.C
+        else Category.D
+end
+
+module Mixed = struct
+    let power_to_cat wkg =
+        if wkg >= 4.0 then Category.A
+        else if wkg >= 3.2 then Category.B
+        else if wkg >= 2.5 then Category.C
+        else Category.D
+end
 
 let fetch_event event_id =
     Utils.flatten_placings (Utils.fetch_placings (Printf.sprintf
@@ -135,10 +167,10 @@ let cats_for_placings placings event_id =
             {
                 placing
                     with
-                p_category = power_to_cat (max (List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) results).p_wkg_ftp placing.p_wkg_ftp)
+                p_category = Women.power_to_cat (max (List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) results).p_wkg_ftp placing.p_wkg_ftp)
             }
         with
-        | Failure "empty list" -> { placing with p_category = power_to_cat placing.p_wkg_ftp }
+        | Failure "empty list" -> { placing with p_category = Women.power_to_cat placing.p_wkg_ftp }
         | exn ->
             Printf.printf "error processing results for %s\n" placing.p_zwid;
             raise exn
@@ -160,7 +192,7 @@ let points results =
     let num_riders = Array.map List.length results in
     Array.mapi (fun ix placings ->
             List.map (fun placing ->
-                    Printf.printf "%d : %d = %d\n" placing.p_position_in_cat num_riders.(ix) (position_to_points placing.p_position_in_cat num_riders.(ix));
+                    (*Printf.printf "%d : %d = %d\n" placing.p_position_in_cat num_riders.(ix) (position_to_points placing.p_position_in_cat num_riders.(ix));*)
                     placing, position_to_points placing.p_position_in_cat num_riders.(ix))
                 placings)
         results
@@ -182,21 +214,23 @@ let team_of_placing p = {
     t_tid = p.p_tid;
 }
 
+module TeamMap = Map.Make(struct type t = team_t let compare lhs rhs = compare lhs.t_tid rhs.t_tid end);;
+
 (* all_points : Results_t.placing list array list *)
 let team_points all_points =
-    let team_cats = Array.init 4 (fun _ -> Hashtbl.create 16) in
+    let team_cats = Array.make 4 TeamMap.empty in
     List.iter (fun race ->
         Array.iteri (fun ix results ->
             List.iter (fun (placing,points) ->
                 let team = team_of_placing placing in
                 let points = points + 1 in
                 if String.length team.t_tname > 0 then begin
-                    match Hashtbl.find_opt team_cats.(ix) team with
-                    | None -> Hashtbl.add team_cats.(ix) team (points,1)
-                    | Some (pts,evts) -> Hashtbl.replace team_cats.(ix) team ((pts+points),(evts+1))
+                    team_cats.(ix) <- TeamMap.update team (function
+                    | None -> Some (points, 1)
+                    | Some (pts,evts) -> Some (pts+points,evts+1)) team_cats.(ix)
                 end) results
-            ) race
-        ) all_points;
+        ) race
+    ) all_points;
     team_cats
 ;;
 
@@ -246,7 +280,7 @@ let print_csv data =
             results) data
 ;;
 
-let print_team_csv data =
+let print_team_csv data = 
     Printf.printf "category,events,points,tname,tc,tbc,tbd\n";
     Array.iteri (fun ix results ->
         List.iter (fun (team, (points, events)) ->
@@ -254,9 +288,8 @@ let print_team_csv data =
                     (ix_to_string ix)
                     events points team.t_tname team.t_tc team.t_tbc team.t_tbd
                 )
-        (List.sort (fun a b -> compare (fst (snd b)) (fst (snd a))) (List.of_seq (Hashtbl.to_seq results)))
+        (List.sort (fun a b -> compare (fst (snd b)) (fst (snd a))) (List.of_seq (TeamMap.to_seq results)))
     ) data
-;;
 
 let rec ok prompt =
     Printf.printf "%s: [y/N] " prompt;

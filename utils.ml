@@ -43,7 +43,7 @@ let get url oc =
         (Printf.sprintf "https://www.zwiftpower.com/zz.php?do=edit_results&act=save&zwift_event_id=%d" event_id)
         ("edit_results=" ^ data);;*)
 
-let submit_results event_id data =
+let login_zp () =
     let password = try
             Unix.getenv "ZP_PASSWORD"
         with Not_found ->
@@ -52,11 +52,16 @@ let submit_results event_id data =
             Unix.tcsetattr Unix.stdout Unix.TCSANOW { tio with c_echo = false };
             let pw = read_line() in
             Unix.tcsetattr Unix.stdout Unix.TCSANOW tio;
+            print_endline ();
             pw
     in
     post "https://www.zwiftpower.com/ucp.php?mode=login"
         (Printf.sprintf "username=jessica.l.hamilton@gmail.com&password=%s&autologin=1&redirect=./index.php?&login="
-            password);
+            password)
+;;
+
+let submit_results event_id data =
+    login_zp ();
     post
         (Printf.sprintf "https://www.zwiftpower.com/zz.php?do=edit_results&act=save&zwift_event_id=%d" event_id)
         ("edit_results=" ^ data)
@@ -180,4 +185,40 @@ let replace_escapes s =
     List.fold_left (fun s (sym,txt) ->
             Str.global_replace (Str.regexp_string sym) txt s)
         s html_map
+;;
+
+let longest_common_substring left right =
+	let left_len = String.length left in
+	let right_len = String.length right in
+	let num = Array.make_matrix left_len right_len 0 in
+	let maxlen = ref 0 in
+	let last_subs_begin = ref 0 in
+	let buffer = Buffer.create (max left_len right_len) in
+
+	for i = 0 to left_len - 1 do
+		for j = 0 to right_len - 1 do
+			if left.[i] <> right.[j] then
+				num.(i).(j) <- 0
+			else begin
+				if i = 0 || j = 0 then
+					num.(i).(j) <- 1
+				else
+					num.(i).(j) <- 1 + num.(i-1).(j-1);
+
+				if num.(i).(j) > !maxlen then begin
+					maxlen := num.(i).(j);
+					let this_subs_begin = i - num.(i).(j) + 1 in
+					if !last_subs_begin = this_subs_begin then
+						Buffer.add_char buffer left.[i]
+					else begin
+						last_subs_begin := this_subs_begin;
+						Buffer.reset buffer;
+						Buffer.add_substring buffer
+							left !last_subs_begin (i + 1 - !last_subs_begin);
+					end
+				end
+			end
+		done;
+	done;
+	Buffer.contents buffer
 ;;
