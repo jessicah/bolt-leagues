@@ -52,7 +52,7 @@ let login_zp () =
             Unix.tcsetattr Unix.stdout Unix.TCSANOW { tio with c_echo = false };
             let pw = read_line() in
             Unix.tcsetattr Unix.stdout Unix.TCSANOW tio;
-            print_endline ();
+            print_newline ();
             pw
     in
     post "https://www.zwiftpower.com/ucp.php?mode=login"
@@ -154,7 +154,7 @@ let filenames dirname =
 ;;
 
 let utf8encode s =
-    let prefs = [| 0x0; 0xc0; 0xe0 |] in
+    let prefs = [| 0x0; 0xc0; 0xe0; 0xf0 |] in
     let s1 n = String.make 1 (Char.chr n) in
     let rec ienc k sofar resid =
         let bct = if k = 0 then 7 else 6 - k in
@@ -168,7 +168,7 @@ let utf8encode s =
 let replace_escapes s =
     let re = Str.regexp "&#[0-9]+;" in
     let subst = function
-    | Str.Delim u -> utf8encode (String.sub u 2 4)
+    | Str.Delim u -> utf8encode (String.sub u 2 (String.length u - 3))
     | Str.Text t -> t
     in
     String.concat "" (List.map subst (Str.full_split re s))
