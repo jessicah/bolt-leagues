@@ -116,7 +116,7 @@ let edit_places event_id places =
         print_endline data;
         failwith "HTML entities found!"
     with Not_found ->
-        ignore (Utils.submit_results (int_of_string event_id) data)
+        ignore (Utils.submit_results event_id data)
 ;;
 
 (* so we don't hit the API repeatedly *)
@@ -134,7 +134,7 @@ let get_placings zwift_id = match IntMap.find_opt zwift_id !zwift_places with
 
 (* used for women, as we don't penalise upgrades *)
 let results_prior_to_event zwift_id event_id =
-    let placings = get_placings (int_of_string zwift_id) in
+    let placings = get_placings zwift_id in
     let placings = List.sort (fun p1 p2 ->
         match p1.p_event_date, p2.p_event_date with
         | Some d1, Some d2 -> compare d1 d2 | _ -> failwith "missing date") (List.concat (Array.to_list placings.placings))
@@ -148,7 +148,7 @@ let results_prior_to_event zwift_id event_id =
             last30
     in
     (*let placings = List.take_while (fun p -> p.p_zid <> event_id) (List.rev placings) in*)
-    let placings = List.take_until (fun p -> p.p_zid = event_id) (List.rev placings) in
+    let placings = List.take_until (fun p -> p.p_zid = string_of_int event_id) (List.rev placings) in
     (* this seems wrong... *)
     let placings = List.take 30 (List.rev placings) in
     placings
@@ -156,7 +156,7 @@ let results_prior_to_event zwift_id event_id =
 
 (* used for normal leagues, as we DQ results in lower cats *)
 let results_for_standard_leagues zwift_id event_id =
-    let placings = get_placings (int_of_string zwift_id) in
+    let placings = get_placings zwift_id in
     let placings = List.sort (fun p1 p2 ->
         match p1.p_event_date, p2.p_event_date with
         | Some d1, Some d2 -> compare d1 d2 | _ -> failwith "missing date") (List.concat (Array.to_list placings.placings))
@@ -169,7 +169,7 @@ let results_for_standard_leagues zwift_id event_id =
         else
             last30
     in
-    let placings = List.take_until (fun p -> p.p_zid = event_id) (List.rev placings) in
+    let placings = List.take_until (fun p -> p.p_zid = string_of_int event_id) (List.rev placings) in
     List.rev placings
 ;;
 
@@ -180,9 +180,9 @@ end;;
 module type RaceFunctions = sig
     val power_to_cat : float -> Category.t
 
-    val cats_for_placings : Results_t.placing list -> string -> Results_t.placing list
+    val cats_for_placings : Results_t.placing list -> int -> Results_t.placing list
 
-    val cats_for_event : string -> Results_t.placing list
+    val cats_for_event : int -> Results_t.placing list
 
     val sort_into_cats : Results_t.placing list -> Results_t.placing list array
 end;;
@@ -205,7 +205,7 @@ end
 
 let fetch_event event_id =
     Utils.flatten_placings (Utils.fetch_placings (Printf.sprintf
-        "https://www.zwiftpower.com/api3.php?do=event_results&zid=%s" event_id))
+        "https://www.zwiftpower.com/api3.php?do=event_results&zid=%d" event_id))
 ;;
 
 module Results (T : RaceType) = struct
@@ -214,7 +214,7 @@ module Results (T : RaceType) = struct
     let cats_for_placings placings event_id =
         List.map (fun placing ->
             begin try
-                let results = results_prior_to_event placing.p_zwid event_id in
+                let results = results_prior_to_event (int_of_string placing.p_zwid) event_id in
                 {
                     placing
                         with
@@ -362,24 +362,24 @@ let rec run () =
     let raceModule : (module RaceFunctions) = if women then (module Results(Women)) else (module Results(Mixed)) in
     let module M = (val raceModule : RaceFunctions) in
     Printf.printf "Race 1: ";
-    let first = read_line () in
+    let first = int_of_string (read_line ()) in
     Printf.printf "Race 2: ";
-    let second = read_line () in
+    let second = int_of_string (read_line ()) in
     if ok "Fetch and update categories" then begin
         let first_cats = M.cats_for_event first in
         check_places first_cats;
-        if ok (Printf.sprintf "Submit categories for %s to ZwiftPower" first) then
+        if ok (Printf.sprintf "Submit categories for %d to ZwiftPower" first) then
             edit_places first first_cats;
         let second_cats = M.cats_for_event second in
         check_places second_cats;
-        if ok (Printf.sprintf "Submit categories for %s to ZwiftPower" second) then
+        if ok (Printf.sprintf "Submit categories for %d to ZwiftPower" second) then
             edit_places second second_cats;
     end;
     let first_race = points (M.sort_into_cats (fetch_event first)) in
     let second_race = points (M.sort_into_cats (fetch_event second)) in
-    if ok (Printf.sprintf "Show table for %s" first) then
+    if ok (Printf.sprintf "Show table for %d" first) then
         print_table first_race;
-    if ok (Printf.sprintf "Show table for %s" second) then
+    if ok (Printf.sprintf "Show table for %d" second) then
         print_table second_race;
     if ok (Printf.sprintf "Show table for individual points") then
         print_table (best_points first_race second_race);
@@ -389,6 +389,51 @@ let rec run () =
     if ok (Printf.sprintf "Dump CSV for team points") then
         print_team_csv team;
     Printf.printf "Complete!\n"
+;;
+
+(* Results_t.placing list array *)
+let league_results league =
+    let module M = Results(Mixed) in
+    Array.map2 (fun event_id placings ->
+            M.cats_for_placings placings event_id)
+        league (Array.map fetch_event league)
+;;
+
+(* Results_t.placing list array array *)
+(*let league_sorted_results league =
+    let module M = Results(Mixed) in
+    let results = league_results league in
+    Array.map (fun placings ->
+        M.sort_into_cats placings) league
+;;*)
+
+exception Found of int;;
+
+let array_index_of v a = try
+        for i = 0 to Array.length a - 1 do
+            if a.(i) = v then raise (Found i)
+        done;
+        -1 (* not found *)
+    with Found i -> i
+;;
+
+let leagues_by_zwifter league =
+    let results : Results_t.placing list array = league_results league in
+    let event_zwifters = ref IntMap.empty in
+    Array.iter2 (fun event_id placings -> (* results in an event *)
+        List.iter (fun placing -> (* a single result in the event *)
+            let ix = array_index_of event_id league in
+            Printf.printf "event index for %d is %d\n" event_id ix;
+            Printf.printf "updating data for zwifter %s\n" placing.p_zwid;
+            match IntMap.find_opt (int_of_string placing.p_zwid) !event_zwifters with
+            | None ->
+                event_zwifters := IntMap.add (int_of_string placing.p_zwid)
+                    (Array.mapi (fun i x -> if i = ix then Some placing else None) league)
+                    !event_zwifters
+            | Some array ->
+                array.(ix) <- Some placing
+        ) placings) league results;
+    event_zwifters
 ;;
 
 (*(* this is only data for a single race, not a league... *)
