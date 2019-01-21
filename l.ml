@@ -115,6 +115,10 @@ let get_name result zwifters =
     (List.find (fun z -> z.zwid = result.place.p_zwid) zwifters).name
 ;;
 
+let upgraded results =
+    List.filter (fun result -> result.entry_cat <> result.result_cat) results
+;;
+
 let format_place zwifters result =
     let place = result.place in
     Printf.sprintf "%s, %s, %d, %s, %s, %s, %d,"
@@ -134,6 +138,7 @@ let check_places results zwifters =
 ;;
 
 let edit_places event_id results zwifters =
+    let results = upgraded results in
     let data = Utils.replace_escapes (String.concat "\n" (List.map (format_place zwifters) results)) in
     try
         Str.search_forward (Str.regexp "&[a-z]+;") data 0;
@@ -144,6 +149,7 @@ let edit_places event_id results zwifters =
 ;;
 
 let edit_places_check event_id results zwifters =
+    let results = upgraded results in
     let data = Utils.replace_escapes (String.concat "\n" (List.map (format_place zwifters) results)) in
     try
         Str.search_forward (Str.regexp "&[a-z]+;") data 0;
@@ -189,19 +195,14 @@ let results_prior_to_event zwift_id event_id =
 ;;
 
 let results_prior_week zwift_id event_ids =
-    let first, second = event_ids in
-    let placings = get_placings zwift_id in
-    let first_result = List.find_opt (fun placing -> placing.p_zid = (string_of_int first))
-        (List.concat (Array.to_list placings.placings))
-    in
-    let second_result = List.find_opt (fun placing -> placing.p_zid = (string_of_int second))
-        (List.concat (Array.to_list placings.placings))
-    in
-    match first_result, second_result with 
-    | Some r, None -> Some r
-    | None, Some r -> Some r
-    | None, None -> None
-    | Some l, Some r -> Some { l with p_category = min l.p_category r.p_category; p_wkg_ftp = max l.p_wkg_ftp r.p_wkg_ftp }
+    let placings = (get_placings zwift_id).placings |> Array.to_list |> List.concat in
+    let results = List.map (fun event_id ->
+        List.find_opt (fun placing -> placing.p_zid = event_id) placings) event_ids in
+    let rec loop placing = function
+    | None :: tail -> loop placing tail
+    | p :: tail -> loop p tail
+    | [] -> placing
+    in loop None results
 ;;
 
 module type RaceType = sig
@@ -211,9 +212,9 @@ end;;
 module type RaceFunctions = sig
     val power_to_cat : float -> Category.t
 
-    val cats_for_placings : Results_t.placing list -> int -> (int * int) option -> result list
+    val cats_for_placings : Results_t.placing list -> int -> string list -> result list
 
-    val cats_for_event : int -> (int * int) option -> result list
+    val cats_for_event : int -> string list -> result list
 
     val sort_into_cats : Results_t.placing list -> Results_t.placing list array
 end;;
@@ -247,8 +248,8 @@ module Results (T : RaceType) = struct
             begin try
                 let zwift_id = int_of_string placing.p_zwid in
                 let prev_event_results = match prev_event_ids with
-                        | None ->  None
-                        | Some evt_ids -> results_prior_week zwift_id evt_ids
+                        | [] ->  None
+                        | evt_ids -> results_prior_week zwift_id evt_ids
                 in
                 match prev_event_results with
                     | None ->
@@ -269,7 +270,7 @@ module Results (T : RaceType) = struct
                             original_place = placing;
                             place = place;
                             entry_cat = placing.p_category;
-                            result_cat = min place.p_category (T.power_to_cat placing.p_wkg_ftp)
+                            result_cat = min placing.p_category (min place.p_category (T.power_to_cat placing.p_wkg_ftp))
                         }
             with
             | Failure "empty list" -> {
@@ -413,23 +414,29 @@ let rec ok prompt =
     | _ -> ok prompt
 ;;
 
-let rec run () =
+let rec run first second previous =
     let women = ok "Women" in
     let raceModule : (module RaceFunctions) = if women then (module Results(Women)) else (module Results(Mixed)) in
     let module M = (val raceModule : RaceFunctions) in
-    Printf.printf "Race 1: ";
-    let first = int_of_string (read_line ()) in
-    Printf.printf "Prev Race 1: ";
-    let first_prev = (match read_line () with | "" -> None | x -> Some (int_of_string x)) in
-    Printf.printf "Race 2: ";
-    let second = int_of_string (read_line ()) in
-    Printf.printf "Prev Race 2: ";
-    let second_prev = (match read_line () with | "" -> None | x -> Some (int_of_string x)) in
-    let prevs = match first_prev, second_prev with
+    (*Printf.printf "Race 1: ";
+    let first = int_of_string (read_line ()) in*)
+    (*Printf.printf "Prev Race 1: ";
+    let first_prev = (match read_line () with | "" -> None | x -> Some (int_of_string x)) in*)
+    (*Printf.printf "Race 2: ";
+    let second = int_of_string (read_line ()) in*)
+    (*Printf.printf "Prev Race 2: ";
+    let second_prev = (match read_line () with | "" -> None | x -> Some (int_of_string x)) in*)
+    (*let prevs = match first_prev, second_prev with
     | None, None -> None
     | Some a, Some b -> Some (a,b)
     | _ -> failwith "must have two events or no events"
-    in
+    in*)
+    (*Printf.printf "Previous races (comma separated): ";
+    let previous = read_line () in*)
+    let prevs = begin match String.split_on_char ',' previous with
+        | [] | [""] -> []
+        | list -> list
+    end in
     if ok "Fetch and update categories" then begin
         let first_cats = M.cats_for_event first prevs in
         let zwifters = Utils.fetch_zwifters (Printf.sprintf "https://www.zwiftpower.com/api3.php?do=event_results_zwift&zid=%d" first) in

@@ -99,21 +99,22 @@ let unlink file =
 let rec fetch_placings url n =
     if n = 0 then failwith "retry exceeded";
     begin try
-        unlink "jq.fifo";
-        unlink "atd.fifo";
-        Unix.mkfifo "jq.fifo" 0o644;
-        Unix.mkfifo "atd.fifo" 0o644;
-        let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
-        get url (open_out "jq.fifo");
+        unlink "temp/jq.fifo";
+        unlink "temp/atd.fifo";
+        Unix.mkfifo "temp/jq.fifo" 0o644;
+        Unix.mkfifo "temp/atd.fifo" 0o644;
+        let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
+        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "temp/jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
+        get url (open_out "temp/jq.fifo");
         Unix.close out_fd;
-        let ic = open_in "atd.fifo" in
+        let ic = open_in "temp/atd.fifo" in
         let results = Results_j.placings_of_string (read_all ic) in
         close_in ic;
-        unlink "atd.fifo";
-        unlink "jq.fifo";
+        unlink "temp/atd.fifo";
+        unlink "temp/jq.fifo";
         results
     with exn ->
+        print_endline (Printexc.to_string exn);
         fetch_placings url (n-1)
     end
 ;;
@@ -129,7 +130,7 @@ let rec fetch_zwifters url n =
         Unix.mkfifo "temp/jq.fifo" 0o644;
         Unix.mkfifo "temp/atd.fifo" 0o644;
         let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess_zwift.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
+        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess_zwift.jq"; "temp/jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
         get url (open_out "temp/jq.fifo");
         Unix.close out_fd;
         let ic = open_in "temp/atd.fifo" in
