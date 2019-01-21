@@ -31,7 +31,7 @@ type 'v list_as_singleton = 'v list
 		wrap="fun l -> List.hd l"
 		unwrap="fun x -> [x]">
 
-type categorised_results = rider_result list
+(*type categorised_results = rider_result list
 	wrap <ocaml t="rider_result list array"
 		wrap="fun riders -> let arr = Array.make 7 [] in
 			List.iter (fun rider ->
@@ -47,7 +47,7 @@ type categorised_sprints = sprint_results list
 				let ix = Category.int_of_category rider.s_category in
 				arr.(ix) <- rider :: arr.(ix)) riders;
 			arr"
-		unwrap="fun arr -> List.concat (Array.to_list arr)">
+		unwrap="fun arr -> List.concat (Array.to_list arr)">*)
 
 type categorised_placings = placing list
 	wrap <ocaml t="placing list array"
@@ -60,7 +60,7 @@ type categorised_placings = placing list
 
 type json <ocaml module="Yojson.Safe"> = abstract
 
-type rider_result = {
+(*type rider_result = {
 	ftp : int_option_as_string;
 	friend: bool_as_int;
 	pt: string;
@@ -138,7 +138,7 @@ type rider_result = {
 
 type race = {
 	race_results <json name="data">: categorised_results;
-}
+}*)
 
 type 'v table_as_object = (string * 'v) list <json repr="object">
 	wrap <ocaml t="(string, 'v) Hashtbl.t"
@@ -146,7 +146,7 @@ type 'v table_as_object = (string * 'v) list <json repr="object">
 			List.iter (fun (k, v) -> Hashtbl.add tbl k v) l; tbl"
 		unwrap="fun tbl -> Hashtbl.fold (fun k v l -> (k, v) ::l) tbl []">
 
-type sprint_results = {
+(*type sprint_results = {
 	ftp : int_option_as_string;
 	pt: string;
 	label: string;
@@ -186,7 +186,7 @@ type sprint_results = {
 
 type sprints = {
 	sprint_results <json name="data">: categorised_sprints;
-}
+}*)
 
 type placing = {
 	zid: string;
@@ -232,4 +232,22 @@ type placing = {
 
 type placings = {
 	placings <json name="data">: categorised_placings;
+}
+
+type zwifter = {
+	zwid: string;
+	name: string;
+	pos: int;
+	race_time: float;
+	time_diff: float;
+	bpm: int;
+	hrm: bool;
+	power_type: int;
+	watts: int;
+	wkg: float;
+	wkg_ftp: float;
+}
+
+type zwifters = {
+	zwifters <json name="data">: zwifter list;
 }

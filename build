@@ -4,4 +4,4 @@ rm results_*
 rm *.cmi *.cmo
 atdgen -t results.atd
 atdgen -j results.atd
-ocamlfind ocamlc -c -package atdgen,curl,str category.ml results_t.mli results_j.mli results_t.mli results_j.ml utils.ml
+ocamlfind ocamlc -c -package atdgen,curl,str,netstring map2.mli map2.ml encoding.ml category.ml results_t.mli results_j.mli results_t.mli results_j.ml utils.ml

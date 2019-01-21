@@ -1,6 +1,7 @@
 (* Separate utility functions out, so the main code is easier to reason with *)
 
 let post url data =
+    Printf.printf "Posting to %s...\n%!" url;
     let buf = Buffer.create 80 in
     let c = Curl.init () in
     Curl.set_verbose c true;
@@ -18,6 +19,7 @@ let post url data =
 ;;
 
 let get url oc =
+    Printf.printf "Fetching %s...\n%!" url;
     let c = Curl.init () in
     Curl.set_writefunction c (fun s -> output_string oc s; String.length s);
     Curl.set_url c url;
@@ -119,6 +121,31 @@ let rec fetch_placings url n =
 let fetch_placings url = fetch_placings url 10
 ;;
 
+let rec fetch_zwifters url n =
+    if n = 0 then failwith "retry exceeded";
+    begin try
+        unlink "jq.fifo";
+        unlink "atd.fifo";
+        Unix.mkfifo "jq.fifo" 0o644;
+        Unix.mkfifo "atd.fifo" 0o644;
+        let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
+        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess_zwift.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout;
+        get url (open_out "jq.fifo");
+        Unix.close out_fd;
+        let ic = open_in "atd.fifo" in
+        let results = Results_j.zwifters_of_string (read_all ic) in
+        close_in ic;
+        unlink "atd.fifo";
+        unlink "jq.fifo";
+        results
+    with exn ->
+        fetch_zwifters url (n-1)
+    end
+;;
+
+let fetch_zwifters url = fetch_zwifters url 10
+;;
+
 let flatten_placings placings =
     List.concat (Array.to_list placings.Results_j.placings)
 ;;
@@ -178,13 +205,21 @@ let html_map = [
     "&lt;", "<";
     "&gt;", ">";
     "&amp;", "&";
+    "&auml;","ä";
+    "&ouml;","ö";
 ];;
 
 let replace_escapes s =
     let s = replace_escapes s in
-    List.fold_left (fun s (sym,txt) ->
+    let s = List.fold_left (fun s (sym,txt) ->
             Str.global_replace (Str.regexp_string sym) txt s)
-        s html_map
+        s html_map in
+    Encoding.Url.encode s
+;;
+
+let replace_escapes s =
+    Netencoding.Html.decode `Enc_utf8 `Enc_utf8 () s
+    |> Netencoding.Url.encode ~plus:false
 ;;
 
 let longest_common_substring left right =
