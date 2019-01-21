@@ -1,7 +1,24 @@
 #!/bin/bash
 
-rm results_*
-rm *.cmi *.cmo
+mkdir -p bin
+cd bin
+rm -f results_*
+rm -f *.cmi *.cmo
+
+if [ ! -e results.atd ]; then
+	ln -s ../results.atd results.atd
+fi
+
 atdgen -t results.atd
 atdgen -j results.atd
-ocamlfind ocamlc -c -package atdgen,curl,str,netstring map2.mli map2.ml encoding.ml category.ml results_t.mli results_j.mli results_t.mli results_j.ml utils.ml
+
+SRCS="map2.mli map2.ml category.ml results_t.mli results_j.mli results_j.ml utils.ml"
+
+for file in $SRCS; do
+	echo "Building $file..."
+	if [ ! -e "$file" ]; then
+		ln -s "../$file" "$file"
+	fi
+
+	ocamlfind ocamlc -c -package atdgen,curl,str,netstring $file
+done

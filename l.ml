@@ -5,6 +5,7 @@
 #require "curl";;
 #require "str";;
 #require "netstring";;
+#directory "bin";;
 #load "map2.cmo";;
 #load "category.cmo";;
 #load "results_j.cmo";;

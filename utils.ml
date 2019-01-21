@@ -7,8 +7,8 @@ let post url data =
     Curl.set_verbose c true;
     Curl.set_writefunction c (fun s -> Buffer.add_string buf s; String.length s);
     Curl.set_url c url;
-    Curl.set_cookiejar c "zwiftpower.cookies";
-    Curl.set_cookiefile c "zwiftpower.cookies";
+    Curl.set_cookiejar c "temp/zwiftpower.cookies";
+    Curl.set_cookiefile c "temp/zwiftpower.cookies";
     Curl.set_httpheader c ["Content-Type: application/x-www-form-urlencoded"];
     Curl.set_postfields c data;
     Curl.set_postfieldsize c (String.length data);
@@ -23,8 +23,8 @@ let get url oc =
     let c = Curl.init () in
     Curl.set_writefunction c (fun s -> output_string oc s; String.length s);
     Curl.set_url c url;
-    Curl.set_cookiejar c "zwiftpower.cookies";
-    Curl.set_cookiefile c "zwiftpower.cookies";
+    Curl.set_cookiejar c "temp/zwiftpower.cookies";
+    Curl.set_cookiefile c "temp/zwiftpower.cookies";
     Curl.perform c;
     Curl.cleanup c;
     close_out oc
@@ -51,7 +51,7 @@ let login_zp () =
         with Not_found ->
             print_string "enter password: ";
             let tio = Unix.tcgetattr Unix.stdout in
-            Unix.tcsetattr Unix.stdout Unix.TCSANOW { tio with c_echo = false };
+            Unix.tcsetattr Unix.stdout Unix.TCSANOW { tio with Unix.c_echo = false };
             let pw = read_line() in
             Unix.tcsetattr Unix.stdout Unix.TCSANOW tio;
             print_newline ();
@@ -59,7 +59,7 @@ let login_zp () =
     in
     post "https://www.zwiftpower.com/ucp.php?mode=login"
         (Printf.sprintf "username=jessica.l.hamilton@gmail.com&password=%s&autologin=1&redirect=./index.php?&login="
-            password)
+            password) |> ignore
 ;;
 
 let submit_results event_id data =
@@ -104,7 +104,7 @@ let rec fetch_placings url n =
         Unix.mkfifo "jq.fifo" 0o644;
         Unix.mkfifo "atd.fifo" 0o644;
         let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout;
+        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
         get url (open_out "jq.fifo");
         Unix.close out_fd;
         let ic = open_in "atd.fifo" in
@@ -124,19 +124,19 @@ let fetch_placings url = fetch_placings url 10
 let rec fetch_zwifters url n =
     if n = 0 then failwith "retry exceeded";
     begin try
-        unlink "jq.fifo";
-        unlink "atd.fifo";
-        Unix.mkfifo "jq.fifo" 0o644;
-        Unix.mkfifo "atd.fifo" 0o644;
-        let out_fd = Unix.openfile "atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess_zwift.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout;
-        get url (open_out "jq.fifo");
+        unlink "temp/jq.fifo";
+        unlink "tempatd.fifo";
+        Unix.mkfifo "temp/jq.fifo" 0o644;
+        Unix.mkfifo "temp/atd.fifo" 0o644;
+        let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
+        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess_zwift.jq"; "jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
+        get url (open_out "temp/jq.fifo");
         Unix.close out_fd;
-        let ic = open_in "atd.fifo" in
+        let ic = open_in "temp/atd.fifo" in
         let results = Results_j.zwifters_of_string (read_all ic) in
         close_in ic;
-        unlink "atd.fifo";
-        unlink "jq.fifo";
+        unlink "temp/atd.fifo";
+        unlink "temp/jq.fifo";
         results
     with exn ->
         fetch_zwifters url (n-1)
@@ -178,43 +178,6 @@ let filenames dirname =
             Unix.closedir handle;
             (results, sprints)
     in loop ([], [])
-;;
-
-let utf8encode s =
-    let prefs = [| 0x0; 0xc0; 0xe0; 0xf0 |] in
-    let s1 n = String.make 1 (Char.chr n) in
-    let rec ienc k sofar resid =
-        let bct = if k = 0 then 7 else 6 - k in
-        if resid < 1 lsl bct then
-            (s1 (prefs.(k) + resid)) ^ sofar
-        else
-            ienc (k + 1) (s1 (0x80 + resid mod 64) ^ sofar) (resid / 64)
-    in
-    ienc 0 "" (int_of_string s)
-
-let replace_escapes s =
-    let re = Str.regexp "&#[0-9]+;" in
-    let subst = function
-    | Str.Delim u -> utf8encode (String.sub u 2 (String.length u - 3))
-    | Str.Text t -> t
-    in
-    String.concat "" (List.map subst (Str.full_split re s))
-;;
-
-let html_map = [
-    "&lt;", "<";
-    "&gt;", ">";
-    "&amp;", "&";
-    "&auml;","ä";
-    "&ouml;","ö";
-];;
-
-let replace_escapes s =
-    let s = replace_escapes s in
-    let s = List.fold_left (fun s (sym,txt) ->
-            Str.global_replace (Str.regexp_string sym) txt s)
-        s html_map in
-    Encoding.Url.encode s
 ;;
 
 let replace_escapes s =
