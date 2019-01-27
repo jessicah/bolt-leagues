@@ -414,6 +414,48 @@ let rec ok prompt =
     | _ -> ok prompt
 ;;
 
+module StringMap = Map2.Make(String);;
+
+let podiums races =
+    let map = ref StringMap.empty in
+    let position_to_string = function 1 -> "gold" | 2 -> "silver" | 3 -> "bronze" | _ -> failwith "invalid position" in
+    List.iter (fun race ->
+        Array.iter (fun places ->
+            List.iter (fun place ->
+                match place.p_position_in_cat with
+                | 1 | 2 | 3 ->
+                    map := StringMap.update place.p_zwid (function
+                        | None -> Some [position_to_string place.p_position_in_cat]
+                        | Some list -> Some (position_to_string place.p_position_in_cat :: list)) !map
+                | _ -> ()) places) race) races;
+    !map
+;; 
+
+let print_podiums_csv table =
+    StringMap.iter (fun zwid trophies ->
+        let trophies = List.sort (fun left right ->
+            if left = "gold" then -1
+            else if right = "gold" then 1
+            else if left = "silver" then -1
+            else if right = "silver" then 1
+            else if left = "bronze" then -1
+            else 1) trophies in
+        Printf.printf "%s,%s\n" zwid (String.concat " " trophies)) table
+;;
+
+let write_podiums_csv oc table =
+    Printf.fprintf oc "zwid,podiums\n";
+    StringMap.iter (fun zwid trophies ->
+        let trophies = List.sort (fun left right ->
+            if left = "gold" then -1
+            else if right = "gold" then 1
+            else if left = "silver" then -1
+            else if right = "silver" then 1
+            else if left = "bronze" then -1
+            else 1) trophies in
+        Printf.fprintf oc "%s,%s\n" zwid (String.concat " " trophies)) table
+;;
+
 let rec run first second previous =
     let women = ok "Women" in
     let raceModule : (module RaceFunctions) = if women then (module Results(Women)) else (module Results(Mixed)) in
@@ -455,28 +497,45 @@ let rec run first second previous =
         (*if ok "Show form data" then
             edit_places_check first first_cats;*)
     end;
-    let first_race = points (M.sort_into_cats (fetch_event first)) in
-    let second_race = points (M.sort_into_cats (fetch_event second)) in
+    let first_race = fetch_event first |> M.sort_into_cats in
+    let second_race = fetch_event second |> M.sort_into_cats in
+    let first_race_points = points first_race in
+    let second_race_points = points second_race in
     if ok (Printf.sprintf "Show table for %d" first) then
-        print_table first_race;
+        print_table first_race_points;
     if ok (Printf.sprintf "Show table for %d" second) then
-        print_table second_race;
+        print_table second_race_points;
     if ok (Printf.sprintf "Show table for individual points") then
-        print_table (best_points first_race second_race);
+        print_table (best_points first_race_points second_race_points);
     if ok (Printf.sprintf "Dump CSV for individual points") then
-        print_csv (best_points first_race second_race);
-    let team = team_points [first_race; second_race] in
+        print_csv (best_points first_race_points second_race_points);
+    let team = team_points [first_race_points; second_race_points] in
     if ok (Printf.sprintf "Dump CSV for team points") then
         print_team_csv team;
+    if ok "Dump CSV for podiums" then
+        podiums [first_race; second_race] |> print_podiums_csv;
     if ok "Save to file" then begin
         let oc_ind = open_out "current_ind.csv" in
         let oc_team = open_out "current_team.csv" in
-        write_csv oc_ind (best_points first_race second_race);
+        let oc_podiums = open_out "current_podiums.csv" in
+        write_csv oc_ind (best_points first_race_points second_race_points);
         write_team_csv oc_team team;
+        write_podiums_csv oc_podiums (podiums [first_race; second_race]);
         close_out oc_ind;
         close_out oc_team;
+        close_out oc_podiums;
     end;
     Printf.printf "Complete!\n"
+;;
+
+let wild_podiums = [129382; 132853; 135191; 129383; 132859; 136832];;
+
+let podiums_for event_ids =
+    let module M = Results(Women) in
+    let oc = open_out "wild_podiums.csv" in
+    List.map (fun event_id -> fetch_event event_id |> M.sort_into_cats) event_ids
+        |> podiums |> write_podiums_csv oc;
+    close_out oc
 ;;
 
 (* Results_t.placing list array *)
