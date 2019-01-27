@@ -90,6 +90,13 @@ let num_categories = 5;;
 
 let race_categories = [Cat.A; Cat.B; Cat.C; Cat.D];;
 
+type result = {
+    zwift_id: int;
+    mutable place: placing;
+    entry_cat: Category.t;
+    result_cat: Category.t;
+}
+
 let best_cat_results results =
     match List.hd_opt
         (List.drop_while ((=) [])
@@ -218,10 +225,13 @@ module Results (T : RaceType) = struct
                 {
                     placing
                         with
-                    p_category = T.power_to_cat (max (List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) results).p_wkg_ftp placing.p_wkg_ftp)
+                    (* doesn't allow us to to DQs yet though... hmmmm *)
+                    p_category = min (* min here actually works out to be max *)
+                        (T.power_to_cat (max (List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) results).p_wkg_ftp placing.p_wkg_ftp))
+                        placing.p_category
                 }
             with
-            | Failure "empty list" -> { placing with p_category = T.power_to_cat placing.p_wkg_ftp }
+            | Failure "empty list" -> { placing with p_category = min (T.power_to_cat placing.p_wkg_ftp) placing.p_category }
             | exn ->
                 Printf.printf "error processing results for %s\n" placing.p_zwid;
                 raise exn
@@ -433,8 +443,35 @@ let leagues_by_zwifter league =
             | Some array ->
                 array.(ix) <- Some placing
         ) placings) league results;
-    event_zwifters
+    !event_zwifters
 ;;
+
+let best_cat_results results =
+    let list = List.map (function Some x -> x) (List.filter ((<>) None) (Array.to_list results)) in
+    match List.hd_opt
+        (List.drop_while ((=) [])
+            (List.map (fun cat ->
+                List.filter (fun p -> cat = p.p_category) list)
+                race_categories))
+    with None -> [] | Some x -> x
+;;
+
+let results leagues =
+    let x = IntMap.bindings (leagues_by_zwifter leagues) in
+    let y = List.map (fun (id,results) -> best_cat_results results) x in
+    let z = List.concat y in
+    let events = ref IntMap.empty in
+    List.iter (fun place ->
+        let id = int_of_string place.p_zid in
+        events := IntMap.update id (function
+            | None -> Some [place]
+            | Some list -> Some (place :: list)) !events) z;
+    !events
+;;
+
+(* also need to recalculate positions... or can we just push edits to ZP, then fetch again? *)
+
+(* and then need to split back into events *)
 
 (*(* this is only data for a single race, not a league... *)
 let race = Results_j.race_of_string (Utils.read_file "ages.results.json");;
