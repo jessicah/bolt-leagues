@@ -1,10 +1,13 @@
 #!/usr/bin/env ocaml
 
 #use "topfind";;
+#thread;;
 #require "atdgen";;
 #require "curl";;
 #require "str";;
 #require "netstring";;
+#require "sqlexpr";;
+#require "ppx_sqlexpr";;
 #directory "bin";;
 #load "map2.cmo";;
 #load "category.cmo";;
