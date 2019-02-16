@@ -15,6 +15,7 @@
 #load "unix.cma";;
 #load "encoding.cmo";;
 #load "utils.cmo";;
+#use "db.ml";;
 
 open Results_t;;
 module Cat = Category;;
@@ -119,7 +120,7 @@ let get_name result zwifters =
 ;;
 
 let upgraded results =
-    List.filter (fun result -> result.entry_cat <> result.result_cat) results
+    List.filter (fun result -> result.entry_cat <> result.result_cat || result.result_cat > Category.U) results
 ;;
 
 let format_place zwifters result =
@@ -210,10 +211,16 @@ let results_prior_week zwift_id event_ids =
 
 module type RaceType = sig
     val power_to_cat : float -> Category.t
+
+    val placing_to_cat : Results_t.placing -> Category.t
+
+    val uses_race_history : bool
 end;;
 
 module type RaceFunctions = sig
     val power_to_cat : float -> Category.t
+
+    val placing_to_cat : Results_t.placing -> Category.t
 
     val cats_for_placings : Results_t.placing list -> int -> string list -> result list
 
@@ -228,6 +235,10 @@ module Women = struct
         else if wkg >= 3.2 then Category.B
         else if wkg >= 2.5 then Category.C
         else Category.D
+    
+    let placing_to_cat p = power_to_cat p.p_wkg_ftp
+
+    let uses_race_history = true
 end
 
 module Mixed = struct
@@ -236,6 +247,26 @@ module Mixed = struct
         else if wkg >= 3.2 then Category.B
         else if wkg >= 2.5 then Category.C
         else Category.D
+    
+    let placing_to_cat p = power_to_cat p.p_wkg_ftp
+
+    let uses_race_history = true
+end
+
+module Ages = struct
+    let power_to_cat age =
+        if age < 39. then Category.A
+        else if age < 47. then Category.B
+        else if age < 52. then Category.C
+        else Category.D
+    
+    let placing_to_cat p =
+        if p.p_age <= 38 then Category.A
+        else if p.p_age <= 46 then Category.B
+        else if p.p_age <= 51 then Category.C
+        else Category.D
+    
+    let uses_race_history = false
 end
 
 let fetch_event event_id =
@@ -243,8 +274,13 @@ let fetch_event event_id =
         "https://www.zwiftpower.com/api3.php?do=event_results&zid=%d" event_id))
 ;;
 
+let max_by f a b = max (f a) (f b)
+;;
+
 module Results (T : RaceType) = struct
     let power_to_cat = T.power_to_cat
+
+    let placing_to_cat = T.placing_to_cat
 
     let cats_for_placings placings event_id prev_event_ids =
         List.map (fun placing ->
@@ -254,26 +290,36 @@ module Results (T : RaceType) = struct
                         | [] ->  None
                         | evt_ids -> results_prior_week zwift_id evt_ids
                 in
-                match prev_event_results with
-                    | None ->
+                match prev_event_results, T.uses_race_history with
+                    | None, true ->
                         let results = results_prior_to_event (int_of_string placing.p_zwid) event_id in
+                        (*let best : Results_t.placing = List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) (placing :: results) in*)
+                        let best_cat = List.fold_left (fun cat p -> min cat (T.placing_to_cat p)) Category.D (placing :: results) in
                         {
                             zwift_id = zwift_id;
                             original_place = placing;
                             place = placing;
                             entry_cat = placing.p_category;
                             result_cat = min (* min here actually works out to be max *)
-                                (T.power_to_cat (max (List.max_by (fun p1 p2 -> p1.p_wkg_ftp > p2.p_wkg_ftp) results).p_wkg_ftp placing.p_wkg_ftp))
+                                best_cat
                                 placing.p_category
                             (* max of previous results, entered category, and 95% 20 min W/kg *)
                         }
-                    | Some place ->
+                    | Some place, _ ->
                         {
                             zwift_id = zwift_id;
                             original_place = placing;
                             place = place;
                             entry_cat = placing.p_category;
-                            result_cat = min placing.p_category (min place.p_category (T.power_to_cat placing.p_wkg_ftp))
+                            result_cat = min placing.p_category (min place.p_category (T.placing_to_cat placing))
+                        }
+                    | None, false ->
+                        {
+                            zwift_id = zwift_id;
+                            original_place = placing;
+                            place = placing;
+                            entry_cat = placing.p_category;
+                            result_cat = min placing.p_category (T.placing_to_cat placing)
                         }
             with
             | Failure "empty list" -> {
@@ -281,7 +327,7 @@ module Results (T : RaceType) = struct
                     original_place = placing;
                     place = placing;
                     entry_cat = placing.p_category;
-                    result_cat = min (T.power_to_cat placing.p_wkg_ftp) placing.p_category;
+                    result_cat = min (T.placing_to_cat placing) placing.p_category;
                 }
             | exn ->
                 Printf.printf "error processing results for %s\n" placing.p_zwid;
@@ -347,6 +393,13 @@ let team_points all_points =
     team_cats
 ;;
 
+let rec merge_points = function
+| (left_place, left_score) :: (right_place, right_score) :: rest when left_place.p_zwid = right_place.p_zwid ->
+    (left_place, (max left_score right_score) + 2) :: merge_points rest
+| (place, score) :: rest -> (place, score + 1) :: merge_points rest
+| [] -> []
+;;
+
 let best_points race1 race2 =
     let cats = Array.map2 (fun a b -> List.concat [a;b]) race1 race2 in
     let results = Array.map (fun results -> List.sort (fun (p1,s1) (p2,s2) ->
@@ -359,6 +412,19 @@ let best_points race1 race2 =
     in
     Array.map (fun results -> List.sort (fun (_,s1) (_,s2) -> compare s2 s1) (List.uniq_by (fun a b ->
         (fst a).p_zwid = (fst b).p_zwid) results)) results
+;;
+
+let best_points2 race1 race2 =
+    let cats = Array.map2 (fun a b -> List.concat [a;b]) race1 race2 in
+    let results = Array.map (fun results -> List.sort (fun (p1,s1) (p2,s2) ->
+            if p1.p_zwid = p2.p_zwid then begin
+                if s2 > s1 then 1
+                else if s1 = s2 then 0
+                else -1
+            end else if p1.p_zwid > p2.p_zwid then 1 else 0)
+        results) cats
+    in
+    Array.map (fun results -> List.sort (fun (_,s1) (_,s2) -> compare s2 s1) (merge_points results)) results
 ;;
 
 (*let round1 = best_points
@@ -382,24 +448,24 @@ let print_table data =
 ;;
 
 let write_csv oc data =
-    Printf.fprintf oc "category,events,points,tname,tc,tbc,tbd,name,flag,zwid\n";
+    Printf.fprintf oc "category,events,points,tname,tid,tc,tbc,tbd,name,flag,zwid\n";
     Array.iteri (fun ix results ->
         List.iteri (fun iy (placing, points) ->
-                Printf.fprintf oc "%s,%d,%d,%s,%s,%s,%s,%s,%s,%s\n"
+                Printf.fprintf oc "%s,%d,%d,%s,%s,%s,%s,%s,%s,%s,%s\n"
                     (Category.unwrap placing.p_category)
-                    1 points placing.p_tname placing.p_tc placing.p_tbc placing.p_tbd
+                    1 points placing.p_tname placing.p_tid placing.p_tc placing.p_tbc placing.p_tbd
                     placing.p_name placing.p_flag placing.p_zwid
                 )
             results) data
 ;;
 
 let write_team_csv oc data = 
-    Printf.fprintf oc "category,events,points,tname,tc,tbc,tbd\n";
+    Printf.fprintf oc "category,events,points,tid,tname,tc,tbc,tbd\n";
     Array.iteri (fun ix results ->
         List.iter (fun (team, (points, events)) ->
-            Printf.fprintf oc "%s,%d,%d,%s,%s,%s,%s\n"
+            Printf.fprintf oc "%s,%d,%d,%s,%s,%s,%s,%s\n"
                     (ix_to_string ix)
-                    events points team.t_tname team.t_tc team.t_tbc team.t_tbd
+                    events points team.t_tid team.t_tname team.t_tc team.t_tbc team.t_tbd
                 )
         (List.sort (fun a b -> compare (fst (snd b)) (fst (snd a))) (TeamMap.bindings results))
     ) data
@@ -461,44 +527,22 @@ let write_podiums_csv oc table =
 
 let rec run first second previous =
     let women = ok "Women" in
-    let raceModule : (module RaceFunctions) = if women then (module Results(Women)) else (module Results(Mixed)) in
+    let ages = ok "ages" in
+    let raceModule : (module RaceFunctions) = if women then (module Results(Women)) else if ages then (module Results(Ages)) else (module Results(Mixed)) in
     let module M = (val raceModule : RaceFunctions) in
-    (*Printf.printf "Race 1: ";
-    let first = int_of_string (read_line ()) in*)
-    (*Printf.printf "Prev Race 1: ";
-    let first_prev = (match read_line () with | "" -> None | x -> Some (int_of_string x)) in*)
-    (*Printf.printf "Race 2: ";
-    let second = int_of_string (read_line ()) in*)
-    (*Printf.printf "Prev Race 2: ";
-    let second_prev = (match read_line () with | "" -> None | x -> Some (int_of_string x)) in*)
-    (*let prevs = match first_prev, second_prev with
-    | None, None -> None
-    | Some a, Some b -> Some (a,b)
-    | _ -> failwith "must have two events or no events"
-    in*)
-    (*Printf.printf "Previous races (comma separated): ";
-    let previous = read_line () in*)
-    let prevs = begin match String.split_on_char ',' previous with
-        | [] | [""] -> []
-        | list -> list
-    end in
     if ok "Fetch and update categories" then begin
-        let first_cats = M.cats_for_event first prevs in
+        let first_cats = M.cats_for_event first previous in
         let zwifters = Utils.fetch_zwifters (Printf.sprintf "https://www.zwiftpower.com/api3.php?do=event_results_zwift&zid=%d" first) in
         check_places first_cats zwifters.zwifters;
         if ok (Printf.sprintf "Submit categories for %d to ZwiftPower" first) then begin
             edit_places first first_cats zwifters.zwifters;
         end;
-        (*if ok "Show form data" then
-            edit_places_check first first_cats;*)
-        let second_cats = M.cats_for_event second prevs in
+        let second_cats = M.cats_for_event second previous in
         let zwifters = Utils.fetch_zwifters (Printf.sprintf "https://www.zwiftpower.com/api3.php?do=event_results_zwift&zid=%d" second) in
         check_places second_cats zwifters.zwifters;
         if ok (Printf.sprintf "Submit categories for %d to ZwiftPower" second) then begin
             edit_places second second_cats zwifters.zwifters;
         end;
-        (*if ok "Show form data" then
-            edit_places_check first first_cats;*)
     end;
     let first_race = fetch_event first |> M.sort_into_cats in
     let second_race = fetch_event second |> M.sort_into_cats in
@@ -509,9 +553,9 @@ let rec run first second previous =
     if ok (Printf.sprintf "Show table for %d" second) then
         print_table second_race_points;
     if ok (Printf.sprintf "Show table for individual points") then
-        print_table (best_points first_race_points second_race_points);
+        print_table (best_points2 first_race_points second_race_points);
     if ok (Printf.sprintf "Dump CSV for individual points") then
-        print_csv (best_points first_race_points second_race_points);
+        print_csv (best_points2 first_race_points second_race_points);
     let team = team_points [first_race_points; second_race_points] in
     if ok (Printf.sprintf "Dump CSV for team points") then
         print_team_csv team;
@@ -521,7 +565,7 @@ let rec run first second previous =
         let oc_ind = open_out "current_ind.csv" in
         let oc_team = open_out "current_team.csv" in
         let oc_podiums = open_out "current_podiums.csv" in
-        write_csv oc_ind (best_points first_race_points second_race_points);
+        write_csv oc_ind (best_points2 first_race_points second_race_points);
         write_team_csv oc_team team;
         write_podiums_csv oc_podiums (podiums [first_race; second_race]);
         close_out oc_ind;
@@ -530,6 +574,225 @@ let rec run first second previous =
     end;
     Printf.printf "Complete!\n"
 ;;
+
+let process_single event previous functions =
+    let module M = (val functions : RaceFunctions) in
+    if ok (Printf.sprintf "Fetch and update categories for %d" event) then begin
+        let cats = M.cats_for_event event previous in
+        let zwifters = Utils.fetch_zwifters (Printf.sprintf "https://www.zwiftpower.com/api3.php?do=event_results_zwift&zid=%d" event) in
+        check_places cats zwifters.zwifters;
+        if ok (Printf.sprintf "Submit categories for %d to ZwiftPower" event) then begin
+            edit_places event cats zwifters.zwifters;
+        end
+    end;
+    let race = fetch_event event |> M.sort_into_cats in
+    let race_points = points race in
+    if ok (Printf.sprintf "Show table for individual points") then
+        print_table race_points;
+    if ok (Printf.sprintf "Dump CSV for individual points") then
+        print_csv race_points;
+    let team = team_points [race_points] in
+    if ok (Printf.sprintf "Dump CSV for team points") then
+        print_team_csv team;
+    if ok "Dump CSV for podiums" then
+        podiums [race] |> print_podiums_csv;
+    (race, race_points, team, podiums [race])
+;;
+
+let process_ro event previous functions =
+    let module M = (val functions : RaceFunctions) in
+    let cats = M.cats_for_event event previous in
+    let zwifters = Utils.fetch_zwifters (Printf.sprintf "https://www.zwiftpower.com/api3.php?do=event_results_zwift&zid=%d" event) in
+    check_places cats zwifters.zwifters;
+    let race = fetch_event event |> M.sort_into_cats in
+    let race_points = points race in
+    event, race
+;; (* returns race sorted into cats, event_id * Results_t.placing list array *)
+
+let process f events =
+    let women = ok "Women" in
+    let ages = ok "ages" in
+    let raceModule : (module RaceFunctions) =
+        if women then (module Results(Women))
+        else if ages then (module Results(Ages))
+        else (module Results(Mixed))
+    in
+    let events = Array.to_list events in
+    let rec loop acc previous = function
+    | x :: xs ->
+        let data = f x (List.map string_of_int previous) raceModule in
+        loop (data :: acc) (List.append previous [x]) xs
+    | [] -> print_endline "processed all events"; List.rev acc
+    in loop [] [] events
+;;
+
+let gogogo db all_events =
+    List.iter (fun (event_id, event_in_cats) ->
+        Array.iteri (fun ix results_in_cat ->
+            if ix < 6 then begin
+            let category = Category.unwrap (Category.categories.(ix)) in
+            List.iter (fun placing ->
+                let zwid = int_of_string (placing.p_zwid) in
+                let race = event_id in
+                let position = placing.p_position_in_cat in
+                let name = placing.p_name in
+                let flag = if String.length placing.p_flag = 0 then None else Some placing.p_flag in
+                let team = if String.length placing.p_tid = 0 then None else Team.get db (int_of_string (placing.p_tid)) in
+                Individual.add_result db zwid race category position name flag team) results_in_cat
+            end) event_in_cats) all_events
+;;
+
+(* example fetch from database *)
+
+(* count of races * individual_id list *)
+let completed_events db =
+    Sqlexpr.select db
+        [%sqlc "SELECT @d{COUNT(race_id)}, @d{individual_id} FROM race_result GROUP BY individual_id"]
+
+let completed_events2 db =
+    Sqlexpr.select db
+        [%sqlc "SELECT @d{r.total}, @d{i.individual_id} FROM individual i LEFT JOIN (SELECT COUNT(race_id) AS total, individual_id FROM race_result r GROUP BY individual_id) as r on i.individual_id = r.individual_id"]
+
+(* count of racers * category * event_id list *)
+let total_racers db =
+    Sqlexpr.select db
+        [%sqlc "SELECT @d{COUNT(individual_id)}, @s{category}, @d{race_id} FROM race_result GROUP BY race_id, category"]
+
+(* individual_id list ; may contain duplicates *)
+let podiums db pos =
+    Sqlexpr.select db
+        [%sqlc "SELECT @d{individual_id} FROM race_result WHERE position = %d"] pos
+
+(* individual_id * category list ; may contain duplicate individuaL_ids *)
+let rider_and_category db =
+    Sqlexpr.select db
+        [%sqlc "SELECT DISTINCT @d{individual_id}, @s{category} FROM race_result GROUP BY individual_id, category ORDER BY individual_id, category"]
+
+(* individual_id list ; may contain duplicates *)
+let rec upgrades = function
+    | (id1, cat1) :: (id2, cat2) :: rest when id1 = id2 ->
+        Printf.printf "%d upgraded from %s to %s\n" id1 (max cat1 cat2) (min cat1 cat2);
+        id1 :: upgrades ((id2, cat2) :: rest)
+    | _ :: xs -> upgrades xs
+    | [] -> []
+;;
+
+(* individual_id list *)
+let racers db =
+    Sqlexpr.select db
+        [%sqlc "SELECT DISTINCT @d{individuaL_id} FROM race_result"]
+
+let event_ids db =
+    Sqlexpr.select db
+        [%sqlc "SELECT DISTINCT @d{race_id} FROM race_result ORDER BY race_id"]
+
+(* data we want for individuals:
+   category, events, points, tname, tid, tc, tbc, tbd, name, flag, zwid, podiums
+
+   points = best of two per round + events + number of upgrades *)
+
+let bonuses db =
+    let upgrades = rider_and_category db |> upgrades in
+    let completed = completed_events db in
+    racers db
+    |> List.map (fun individual ->
+        let upgrade_bonus = List.filter (fun id -> id = individual) upgrades |> List.length in
+        individual, upgrade_bonus)
+    |> List.map (fun (individual, points) ->
+        let event_bonus = List.find (fun (events, id) -> id = individual) completed |> fst in
+        individual, points + event_bonus)
+;;
+
+type result = {
+    id : int;
+    event : int;
+    team : int option;
+    category : string;
+    mutable points : int;
+}
+
+let points db =
+    let totals = total_racers db in
+    Sqlexpr.select db
+        [%sqlc "SELECT @d{individual_id}, @d{race_id}, @d?{team_id}, @d{position}, @s{category} FROM race_result"]
+    |> List.map (fun (id, event_id, team_id, position, category) ->
+        let participants = List.find (fun (_, cat, event) -> cat = category && event = event_id) totals |> (fun (total, _, _) -> total) in
+        { id = id; event = event_id; team = team_id; category = category; points = position_to_points position participants})
+
+let same_round left right =
+    Array.fold_left (fun is_same (first, second) ->
+        if left = first && right = second then true else is_same) false wild
+;;
+
+let best_points db =
+    let all_points = points db |> List.sort (fun l r -> let v = compare l.id r.id in if v = 0 then compare l.event r.event else v) in
+    let rec merge = function
+    | a :: b :: cs when a.id = b.id && same_round a.event b.event ->
+        if a.points > b.points then
+            a :: merge cs
+        else
+            b :: merge cs
+    | x :: xs -> x :: merge xs
+    | [] -> []
+    in merge all_points
+;;
+
+let total_points db =
+    let best_points = best_points db in
+    let all_bonuses = bonuses db in
+    racers db
+    |> List.map (fun individual ->
+        let points = List.filter (fun r -> r.id = individual) best_points
+            |> List.map (fun r -> r.points)
+            |> List.fold_left (+) 0 in
+        individual, points)
+    |> List.map (fun (individual, points) ->
+        let bonus = List.find (fun (id,_) -> id = individual) all_bonuses |> snd in
+        individual, points + bonus)
+
+let all_podiums db =
+    let gold, silver, bronze = podiums db 1, podiums db 2, podiums db 3 in
+    racers db |>
+    List.map (fun individual ->
+        let gold = gold |> List.filter ((=) individual) |> List.map (fun _ -> "gold") in
+        let silver = silver |> List.filter ((=) individual) |> List.map (fun _ -> "silver") in
+        let bronze = bronze |> List.filter ((=) individual) |> List.map (fun _ -> "bronze") in
+        individual, String.concat " " (List.concat [gold; silver; bronze]))
+
+let get_individuals db = Sqlexpr.select db [%sqlc "SELECT @d{i.individual_id}, @s{i.individual_name}, @s?{i.individual_flag}, @s?{team_id},  @s{r.category} FROM individual i INNER JOIN
+  (SELECT individual_id, group_concat(team_id) as team_id, MIN(category) as category FROM race_result GROUP BY individual_id ORDER BY race_id) r ON i.individual_id = r.individual_id"];;
+
+let final_results db =
+    let individuals = get_individuals db in
+    let completed = completed_events db in
+    let points = total_points db in
+    let podiums = all_podiums db in
+    List.map (fun (id, name, flag, teams, category) ->
+        let zwid = string_of_int id in
+        let flag = match flag with None -> "" | Some flag -> flag in
+        let tid, tname, tc, tbc, tbd = match teams with
+                | None -> "", "", "", "", ""
+                | Some s -> match Str.split (Str.regexp ",") s |> List.rev |> List.hd |> int_of_string |> Team.get db with
+                    | None -> "", "", "", "", ""
+                    | Some t -> string_of_int t.tid, t.tname, t.tc, t.tbc, t.tbd
+        in
+        let points = List.find (fun (individual,_) -> id = individual) points |> (fun (_,points) -> string_of_int points) in
+        let events = List.find (fun (_,individual) -> id = individual) completed |> (fun (events,_) -> string_of_int events) in
+        let podiums = List.find (fun (individual,_) -> id = individual) podiums |> snd in
+        category :: events :: points :: tname :: tid :: tc :: tbc :: tbd :: name :: flag :: zwid :: podiums :: []) individuals
+    |> List.sort (fun left right ->
+        let v = compare (List.nth left 0) (List.nth right 0) in
+        if v = 0 then compare (int_of_string (List.nth right 2)) (int_of_string (List.nth left 2)) else v);;
+
+let print_results rows =
+    print_endline "category,events,points,tname,tid,tc,tbc,tbd,name,flag,zwid,podiums";
+    List.iter (fun [category; events; points; tname; tid; tc; tbc; tbd; name; flag; zwid; podiums] ->
+        Printf.printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n"
+            category events points tname tid tc tbc tbd name flag zwid podiums) rows;;
+
+let results_for id =
+    Sqlexpr.select db
+        [%sqlc "SELECT @d{individual_id}, @d{race_id}, @d?{team_id}, @d{position}, @s{category} FROM race_result WHERE individual_id = %d"] id;;
 
 let wild_podiums = [129382; 132853; 135191; 129383; 132859; 136832];;
 
