@@ -1,5 +1,14 @@
 (* Separate utility functions out, so the main code is easier to reason with *)
 
+let contains_substring pat str =
+    let rec search i j =
+        if j >= String.length pat then true
+        else if i + j >= String.length str then false
+        else if str.[i + j] = pat.[j] then search i (j+1)
+        else search (i+1) 0
+    in search 0 0
+;;
+
 let post url data =
     Printf.printf "Posting to %s...\n%!" url;
     let buf = Buffer.create 80 in
@@ -55,6 +64,7 @@ let login_zp () =
             let pw = read_line() in
             Unix.tcsetattr Unix.stdout Unix.TCSANOW tio;
             print_newline ();
+            Unix.putenv "ZP_PASSWORD" pw;
             pw
     in
     post "https://www.zwiftpower.com/ucp.php?mode=login"
@@ -96,51 +106,67 @@ let unlink file =
     | e -> print_endline (Printexc.to_string e)
 ;;
 
+let profile_results_cache = Hashtbl.create 100;;
+
 let rec fetch_placings url n =
-    if n = 0 then failwith "retry exceeded";
-    begin try
-        unlink "temp/jq.fifo";
-        unlink "temp/atd.fifo";
-        Unix.mkfifo "temp/jq.fifo" 0o644;
-        Unix.mkfifo "temp/atd.fifo" 0o644;
-        let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "temp/jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
-        get url (open_out "temp/jq.fifo");
-        Unix.close out_fd;
-        let ic = open_in "temp/atd.fifo" in
-        let results = Results_j.placings_of_string (read_all ic) in
-        close_in ic;
-        unlink "temp/atd.fifo";
-        unlink "temp/jq.fifo";
-        results
-    with exn ->
-        print_endline (Printexc.to_string exn);
-        fetch_placings url (n-1)
+    if (contains_substring "=profile_results" url) && (Hashtbl.mem profile_results_cache url) then begin
+        Printf.printf "\x1B[92mFetched %s (from cache)...\x1B[39m\n%!" url;
+        Hashtbl.find profile_results_cache url
+    end else begin
+        if n = 0 then failwith "retry exceeded";
+        begin try
+            unlink "temp/jq.fifo";
+            unlink "temp/atd.fifo";
+            Unix.mkfifo "temp/jq.fifo" 0o644;
+            Unix.mkfifo "temp/atd.fifo" 0o644;
+            let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
+            Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "temp/jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
+            get url (open_out "temp/jq.fifo");
+            Unix.close out_fd;
+            let ic = open_in "temp/atd.fifo" in
+            let results = Results_j.placings_of_string (read_all ic) in
+            close_in ic;
+            unlink "temp/atd.fifo";
+            unlink "temp/jq.fifo";
+            Hashtbl.add profile_results_cache url results;
+            results
+        with exn ->
+            print_endline (Printexc.to_string exn);
+            fetch_placings url (n-1)
+        end
     end
 ;;
 
 let fetch_placings url = fetch_placings url 10
 ;;
 
+let event_results_zwift_cache = Hashtbl.create 100;;
+
 let rec fetch_zwifters url n =
-    if n = 0 then failwith "retry exceeded";
-    begin try
-        unlink "temp/jq.fifo";
-        unlink "tempatd.fifo";
-        Unix.mkfifo "temp/jq.fifo" 0o644;
-        Unix.mkfifo "temp/atd.fifo" 0o644;
-        let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess_zwift.jq"; "temp/jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
-        get url (open_out "temp/jq.fifo");
-        Unix.close out_fd;
-        let ic = open_in "temp/atd.fifo" in
-        let results = Results_j.zwifters_of_string (read_all ic) in
-        close_in ic;
-        unlink "temp/atd.fifo";
-        unlink "temp/jq.fifo";
-        results
-    with exn ->
-        fetch_zwifters url (n-1)
+    if (contains_substring "=event_results_zwift" url) && (Hashtbl.mem event_results_zwift_cache url) then begin
+        Printf.printf "\x1B[92mFetched %s (from cache)...\n\x1B[39m%!" url;
+        Hashtbl.find event_results_zwift_cache url
+    end else begin
+        if n = 0 then failwith "retry exceeded";
+        begin try
+            unlink "temp/jq.fifo";
+            unlink "tempatd.fifo";
+            Unix.mkfifo "temp/jq.fifo" 0o644;
+            Unix.mkfifo "temp/atd.fifo" 0o644;
+            let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
+            Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess_zwift.jq"; "temp/jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
+            get url (open_out "temp/jq.fifo");
+            Unix.close out_fd;
+            let ic = open_in "temp/atd.fifo" in
+            let results = Results_j.zwifters_of_string (read_all ic) in
+            close_in ic;
+            unlink "temp/atd.fifo";
+            unlink "temp/jq.fifo";
+            Hashtbl.add event_results_zwift_cache url results;
+            results
+        with exn ->
+            fetch_zwifters url (n-1)
+        end
     end
 ;;
 
@@ -149,15 +175,6 @@ let fetch_zwifters url = fetch_zwifters url 10
 
 let flatten_placings placings =
     List.concat (Array.to_list placings.Results_j.placings)
-;;
-
-let contains_substring pat str =
-    let rec search i j =
-        if j >= String.length pat then true
-        else if i + j >= String.length str then false
-        else if str.[i + j] = pat.[j] then search i (j+1)
-        else search (i+1) 0
-    in search 0 0
 ;;
 
 let filenames dirname =

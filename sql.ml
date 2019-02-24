@@ -24,18 +24,18 @@ let init_base_db db =
 	Sqlexpr.execute db
 		[%sqlinit "CREATE TABLE IF NOT EXISTS individual(
 			zwid INTEGER PRIMARY KEY,
-			tid INTEGER,
 			name TEXT NOT NULL,
 			flag VARCHAR(6),
-			category CHAR(1) NOT NULL,
-			FOREIGN KEY(tid) REFERENCES team(tid));"];
+			category CHAR(1) NOT NULL);"];
 	Sqlexpr.execute db
 		[%sqlinit "CREATE TABLE IF NOT EXISTS ipoints(
 			zwid INTEGER PRIMARY KEY,
+			tid INTEGER,
 			events INTEGER NOT NULL,
 			points INTEGER NOT NULL,
 			podiums TEXT NOT NULL,
-			FOREIGN KEY(zwid) REFERENCES individual(zwid));"];
+			FOREIGN KEY(zwid) REFERENCES individual(zwid),
+			FOREIGN KEY(tid) REFERENCES team(tid));"];
 	Sqlexpr.execute db
 		[%sqlinit "CREATE TABLE IF NOT EXISTS tpoints(
 			tid INTEGER NOT NULL,
@@ -71,18 +71,22 @@ module Individual = struct
 					VALUES(%d, %d?, %s, %s?, %s)
 					ON CONFLICT(zwid) DO UPDATE SET
 						name=excluded.name,
-						tid=ifnull(excluded.tid,individual.flag),
 						flag=ifnull(excluded.flag,individual.flag),
 						category=max(individual.category,excluded.category);"]
 			zwid tid name flag category |> ignore;
 		Sqlexpr.insert db
-			[%sqlc "INSERT INTO ipoints(zwid, events, points, podiums)
-				VALUES(%d, %d, %d, %s)
+			[%sqlc "INSERT INTO ipoints(zwid, tid, events, points, podiums)
+				VALUES(%d, %d, %d, %d, %s)
 				ON CONFLICT(zwid) DO UPDATE SET
+				  tid=ifnull(excluded.tid, ipoints.tid),
 					events=ipoints.events+excluded.events,
 					points=ipoints.points+excluded.points,
 					podiums=trim(ipoints.podiums + ' ' + excluded.podiums);"]
-			zwid events points podiums |> ignore
+			zwid events tid points podiums |> ignore
+	
+	let update_podiums db zwid podiums =
+		Sqlexpr.execute db
+			[%sqlc "UPDATE ipoints SET podiums=trim("]
 end
 
 module Team = struct
@@ -118,6 +122,26 @@ let load_team_csv filename db =
 			let points = int_of_string points in
 			let team = { tid; tname; tc; tbc; tbd } in
 			Team.insert db team category events points |> ignore
+		| _ -> failwith "invalid CSV")
+		(List.tl rows)
+
+let load_indv_csv_no_podiums filename db =
+	let rows = Csv.load filename in
+
+	List.iter (function
+		| category :: events :: points :: tid :: _ :: _ :: _ :: name :: flag :: zwid ::  [] ->
+			let tid = int_of_string tid
+			and events = int_of_string events
+			and points = int_of_string points
+			and zwid = int_of_string zwid in
+			let team = Sqlexpr.select_one_f_maybe db
+				(fun (tid,tname,tc,tbc,tbd) -> { tid; tname; tc; tbc; tbd })
+				[%sqlc "SELECT @d{tid}, @s{name}, @s{tc}, @s{tbc}, @s{tbd} FROM team WHERE tid = %d"] tid
+			in
+			match team with
+			| None -> Individual.insert db zwid category events points name ~flag () |> ignore
+			| Some team ->
+				Individual.insert db zwid category events points name ~flag ~team () |> ignore
 		| _ -> failwith "invalid CSV")
 		(List.tl rows)
 
@@ -162,6 +186,16 @@ let load_indv_csv_no_tid filename db =
 		| _ -> failwith "invalid CSV")
 		(List.tl rows)
 
+let load_podiums filename db =
+	let rows = Csv.load filename in
+
+	List.iter (function
+		| zwid :: podiums :: [] ->
+			let zwid = int_of_string zwid in
+			Individual.insert db zwid category events points name ~flag ~podiums () |> ignore
+		| _ -> failwith "invalid CSV")
+		(List.tl rows)
+
 let indv_to_csv db filename =
 	let default d = function None -> d | Some x -> x in
 	let maybe f d = function None -> d | Some x -> f x in
@@ -193,7 +227,7 @@ let teams_to_csv db filename =
 	(* category, events, points, tid, tname, tc, tbc, tbd *)
 	let rows = Sqlexpr.select db
 		[%sqlc "SELECT @s{tp.category}, @d{tp.events}, @d{tp.points}, @d{tp.tid}, @s{t.name}, @s{t.tc}, @s{t.tbc}, @s{t.tbc}
-				FROM tpoints tp INNER JOIN team t ON tp.tid = t.tid ORDEBY BY tp.category, tp.points DESC"]
+				FROM tpoints tp INNER JOIN team t ON tp.tid = t.tid ORDER BY tp.category, tp.points DESC"]
 	in
 	let t = List.map (fun (cat, events, points, tid, tname, tc, tbc, tbd) ->
 		[

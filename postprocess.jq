@@ -7,6 +7,7 @@ def tobool: if . == 0 then false else true end;
 	name,
 	zwid: .zwid | tostring,
 	res_id,
+	age,
 	aid,
 	uid: (if (.uid | length) == 0 then "" else .uid end),
 	event_date,

@@ -195,6 +195,7 @@ type placing = {
 	name: string;
 	zwid: string;
 	res_id: string;
+	age: int;
 	aid: string;
 	uid: string;
 	event_date: int nullable;
