@@ -11,6 +11,20 @@ type team = {
 	tbd: string;
 }
 
+type individual = {
+	iid: int;
+	iname: string;
+	iflag: string option;
+}
+
+type one_result = {
+	rid: int;
+	reid: int;
+	rtid: int option;
+	rposition: int;
+	rcategory: string;
+}
+
 module Sqlexpr = Sqlexpr_sqlite.Make(Sqlexpr_concurrency.Id);;
 
 let init_base_db db =
@@ -103,6 +117,17 @@ module Individual = struct
 			[%sqlc "INSERT INTO race_result(individual_id, race_id, team_id, position, category)
 				VALUES(%d, %d, %d?, %d, %s);"]
 			zwid race tid position category |> ignore
+	
+	let get db id =
+		Sqlexpr.select_one_f_maybe db
+			(fun (iid, iname, iflag) -> { iid; iname; iflag })
+			[%sqlc "SELECT @d{individual_id}, @s{individual_name}, @s?{individual_flag} FROM individual WHERE individual_id = %d"] id
+	
+	let result db id event =
+		Sqlexpr.select_one_f_maybe db
+			(fun (rid, reid, rtid, rposition, rcategory) -> { rid; reid; rtid; rposition; rcategory })
+			[%sqlc "SELECT @d{individual_id}, @d{race_id}, @d?{team_id}, @d{position}, @s{category} FROM race_result WHERE individual_id = %d AND race_id = %d"]
+			id event
 end
 
 module Database = struct

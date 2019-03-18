@@ -29,9 +29,14 @@ module ByCat = struct
             [%sqlc "SELECT DISTINCT @d{individual_id} FROM race_result WHERE (race_id = %d OR race_id = %d) AND category = %s"] event1 event2 category
     ;;
 
+    let get_ids_before_round db cat (event1, event2) = Sqlexpr.select db [%sqlc "SELECT DISTINCT @d{individual_id} FROM race_result WHERE (race_id < %d AND race_id < %d) AND category = %s"] event1 event2 cat;;
+    
     module IntSet = Set.Make(struct type t = int let compare = compare end);;
 
-    let ids category = Array.map (get_ids_for_round db category) wild |> Array.map (IntSet.of_list);;
+    let ids category =
+        Array.append
+            ([|get_ids_before_round db category wild.(0) |> IntSet.of_list|])
+            (Array.map (get_ids_for_round db category) wild |> Array.map (IntSet.of_list));;
 
     let data category =
         Array.mapi (fun ix id_set ->
@@ -79,4 +84,17 @@ module Winners = struct
                 OR
                     (rows.row_num = %d AND rows.category = 'D')"]
             ids.(0) ids.(1) ids.(2) ids.(3)
+end
+
+module I = struct
+
+    let results db id =
+        Sqlexpr.select db
+            [%sqlc "SELECT @d{race_id}, @d{position}, @s{category}
+                    FROM race_result WHERE individual_id = %d"] id
+
+    let totals db =
+        Sqlexpr.select db
+            [%sqlc "SELECT @d{race_id}, @d{COUNT(individual_id)}, @s{category}
+                    FROM race_result GROUP BY race_id, category"]
 end

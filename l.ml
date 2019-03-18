@@ -121,6 +121,8 @@ let get_name result zwifters =
     (List.find (fun z -> z.zwid = result.place.p_zwid) zwifters).name
 ;;
 
+let all_upgrades = Hashtbl.create 16;;
+
 let upgraded results =
     List.filter (fun result ->
         begin match result.result_cat with
@@ -128,9 +130,12 @@ let upgraded results =
                 Printf.printf "Rider %s disqualified for %s\n" result.original_place.p_zwid reason
             | _ -> ()
         end;
-        if result.entry_cat <> result.result_cat then
-            Printf.printf "Rider %s upgraded from %s to %s\n" result.original_place.p_zwid
-                (Category.unwrap result.entry_cat) (Category.unwrap result.result_cat);
+        if result.entry_cat <> result.result_cat then begin
+            Printf.printf "Rider %s upgraded from %s to %s; (original: %1.2f) (place: %1.2f)\n" result.original_place.p_zwid
+                (Category.unwrap result.entry_cat) (Category.unwrap result.result_cat)
+                result.original_place.p_wkg_ftp result.place.p_wkg_ftp;
+            Hashtbl.add all_upgrades result.original_place.p_zwid (result.entry_cat, result.result_cat);
+        end;
         result.entry_cat <> result.result_cat || result.result_cat > Category.U) results
 ;;
 
@@ -184,7 +189,8 @@ let zwift_places = ref IntMap.empty;;
 
 let get_placings zwift_id = match IntMap.find_opt zwift_id !zwift_places with
     | Some placings ->
-        Printf.printf "\x1B[92mFetched https://www.zwiftpower.com/api3.php?do=profile_results&z=%d&type=all (from cache)...\x1B[39m\n%!" zwift_id;
+        if !Utils.verbose then
+            Printf.printf "\x1B[92mFetched https://www.zwiftpower.com/api3.php?do=profile_results&z=%d&type=all (from cache)...\x1B[39m\n%!" zwift_id;
         placings
     | None ->
         let placings = Utils.fetch_placings (Printf.sprintf
@@ -206,6 +212,7 @@ let results_prior_to_event zwift_id event_id =
         match p1.p_event_date, p2.p_event_date with
         | Some d1, Some d2 -> compare d1 d2 | _ -> failwith "missing date") (List.concat (Array.to_list placings.placings))
     in
+    let placings = List.filter (fun p -> p.p_category <> Flagged "ERROR") placings in
     let events_before_date = match (List.find (fun p -> p.p_zid = string_of_int event_id) placings).p_event_date with
         | None ->
             print_endline "WARNING: unable to find current event date!";
@@ -307,6 +314,7 @@ module Results (T : RaceType) = struct
     let placing_to_cat = T.placing_to_cat
 
     let cats_for_placings placings event_id prev_event_ids =
+        Printf.printf "Processing event %d\n" event_id;
         List.map (fun placing ->
             begin try
                 let zwift_id = int_of_string placing.p_zwid in
@@ -751,6 +759,10 @@ let bonuses db =
         individual, points + event_bonus)
 ;;
 
+let no_bonuses db =
+    racers db |> List.map (fun individual -> individual, 0)
+;;
+
 type result = {
     id : int;
     event : int;
@@ -803,10 +815,10 @@ let dq_points_below_cat results =
     results
 ;;
 
-let total_points db best_results_f transform_points_f =
+let total_points db bonuses_f best_results_f transform_points_f =
     (*let best_points = best_points db in*)
     let best_points = best_results_f db in
-    let all_bonuses = bonuses db in
+    let all_bonuses = bonuses_f db in
     racers db
     |> List.map (fun individual ->
         let points = List.filter (fun r -> r.id = individual) best_points
@@ -838,6 +850,7 @@ let final_results db points =
     let individuals = get_individuals db in
     let completed = completed_events db in
     let podiums = all_podiums db in
+    let upgrades = rider_and_category db |> upgrades in
     List.map (fun (id, name, flag, teams, category) ->
         let zwid = string_of_int id in
         let flag = match flag with None -> "" | Some flag -> flag in
@@ -850,7 +863,8 @@ let final_results db points =
         let points = List.find (fun (individual,_) -> id = individual) points |> (fun (_,points) -> string_of_int points) in
         let events = List.find (fun (_,individual) -> id = individual) completed |> (fun (events,_) -> string_of_int events) in
         let podiums = List.find (fun (individual,_) -> id = individual) podiums |> snd in
-        category :: events :: points :: tname :: tid :: tc :: tbc :: tbd :: name :: flag :: zwid :: podiums :: []) individuals
+        let upgrades = List.filter (fun individual -> id = individual) upgrades |> List.length |> string_of_int in
+        category :: events :: points :: tname :: tid :: tc :: tbc :: tbd :: name :: flag :: zwid :: podiums :: upgrades :: []) individuals
     |> List.sort (fun left right ->
         let v = compare (List.nth left 0) (List.nth right 0) in
         if v = 0 then compare (int_of_string (List.nth right 2)) (int_of_string (List.nth left 2)) else v);;
@@ -887,9 +901,9 @@ let team_points db with_bonus =
 
 let print_results rows =
     print_endline "category,events,points,tname,tid,tc,tbc,tbd,name,flag,zwid,podiums";
-    List.iter (fun [category; events; points; tname; tid; tc; tbc; tbd; name; flag; zwid; podiums] ->
-        Printf.printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n"
-            category events points tname tid tc tbc tbd name flag zwid podiums) rows;;
+    List.iter (fun [category; events; points; tname; tid; tc; tbc; tbd; name; flag; zwid; podiums; upgrades] ->
+        Printf.printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n"
+            category events points tname tid tc tbc tbd name flag zwid podiums upgrades) rows;;
 
 let print_team_results rows =
     print_endline "category,events,points,tid,tname,tc,tbc,tbd";
@@ -912,11 +926,11 @@ module Wild = struct
         Database.init_db db;
         let data = process process_ro all_wild in
         gogogo db data;
-        let all_bonuses = bonuses db in
-        let points = total_points db (best_points_wild wild) halve_points_below_cat
-            |> List.map (fun (individual, points) ->
+        (*let all_bonuses = bonuses db in*)
+        let points = total_points db bonuses (best_points_wild wild) halve_points_below_cat
+            (*|> List.map (fun (individual, points) ->
                 let bonus = List.find (fun (id,_) -> id = individual) all_bonuses |> snd in
-                individual, points + bonus)
+                individual, points + bonus)*)
         in
         final_results db points, team_points db true, db
 ;;
@@ -924,12 +938,15 @@ end
 
 module Crit = struct
     let go () =
+        Printexc.record_backtrace true;
+        try
         let db = Sqlexpr.open_db ":memory:" in
         Database.init_db db;
         let data = process process_rw criterium in
         gogogo db data;
-        let points = total_points db best_points_std dq_points_below_cat in
+        let points = total_points db no_bonuses best_points_std dq_points_below_cat in
         final_results db points, team_points db false, db
+        with exc -> Printexc.print_backtrace stdout; raise exc
 end
 
 module IronGoat = struct
@@ -938,7 +955,7 @@ module IronGoat = struct
         Database.init_db db;
         let data = process process_rw irongoat in
         gogogo db data;
-        let points = total_points db best_points_std dq_points_below_cat in
+        let points = total_points db no_bonuses best_points_std dq_points_below_cat in
         final_results db points, team_points db false, db
 end
 
@@ -948,7 +965,7 @@ module TimeTrial = struct
         Database.init_db db;
         let data = process process_rw timetrial in
         gogogo db data;
-        let points = total_points db best_points_std dq_points_below_cat in
+        let points = total_points db no_bonuses best_points_std dq_points_below_cat in
         final_results db points, team_points db false, db
 end
 
@@ -989,7 +1006,7 @@ module Ages = struct
         Database.init_db db;
         let data = process process_ro ages in
         gogogo db data;
-        let points = total_points db best_points_std dq_points_below_cat in
+        let points = total_points db no_bonuses best_points_std dq_points_below_cat in
         final_results db points, team_points db false, db
 end
 

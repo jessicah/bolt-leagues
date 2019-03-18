@@ -1,5 +1,7 @@
 (* Separate utility functions out, so the main code is easier to reason with *)
 
+let verbose = ref false
+
 let contains_substring pat str =
     let rec search i j =
         if j >= String.length pat then true
@@ -10,10 +12,10 @@ let contains_substring pat str =
 ;;
 
 let post url data =
-    Printf.printf "Posting to %s...\n%!" url;
+    if !verbose then Printf.printf "Posting to %s...\n%!" url;
     let buf = Buffer.create 80 in
     let c = Curl.init () in
-    Curl.set_verbose c true;
+    Curl.set_verbose c false;
     Curl.set_writefunction c (fun s -> Buffer.add_string buf s; String.length s);
     Curl.set_url c url;
     Curl.set_cookiejar c "temp/zwiftpower.cookies";
@@ -28,7 +30,7 @@ let post url data =
 ;;
 
 let get url oc =
-    Printf.printf "Fetching %s...\n%!" url;
+    if !verbose then Printf.printf "Fetching %s...\n%!" url;
     let c = Curl.init () in
     Curl.set_writefunction c (fun s -> output_string oc s; String.length s);
     Curl.set_url c url;
@@ -110,7 +112,7 @@ let profile_results_cache = Hashtbl.create 100;;
 
 let rec fetch_placings url n =
     if (contains_substring "=profile_results" url) && (Hashtbl.mem profile_results_cache url) then begin
-        Printf.printf "\x1B[92mFetched %s (from cache)...\x1B[39m\n%!" url;
+        if !verbose then Printf.printf "\x1B[92mFetched %s (from cache)...\x1B[39m\n%!" url;
         Hashtbl.find profile_results_cache url
     end else begin
         if n = 0 then failwith "retry exceeded";
@@ -144,7 +146,7 @@ let event_results_zwift_cache = Hashtbl.create 100;;
 
 let rec fetch_zwifters url n =
     if (contains_substring "=event_results_zwift" url) && (Hashtbl.mem event_results_zwift_cache url) then begin
-        Printf.printf "\x1B[92mFetched %s (from cache)...\n\x1B[39m%!" url;
+        if !verbose then Printf.printf "\x1B[92mFetched %s (from cache)...\n\x1B[39m%!" url;
         Hashtbl.find event_results_zwift_cache url
     end else begin
         if n = 0 then failwith "retry exceeded";

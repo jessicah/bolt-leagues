@@ -15,25 +15,46 @@ factors = [("Week {}".format(week), "Cat {}".format(cat)) for week in weeks for 
 
 classification = ["existing", "new"]
 
+# existing = [
+#     [  0,  0,  0,  0 ],
+#     [  5, 11, 15,  4 ],
+#     [  5, 16, 18,  4 ],
+#     [  8, 15, 18,  4 ],
+#     [ 11, 12, 20,  3 ],
+#     [ 11, 22, 17,  5 ],
+#     [  7, 16, 23,  7 ],
+#     [ 10, 17, 23,  8 ],
+# ]
+# new = [
+#     [  9, 20, 28, 10],
+#     [  7, 11, 20,  3 ],
+#     [  4,  9,  6,  4 ],
+#     [  5,  6,  0,  3 ],
+#     [  5,  4,  4,  3 ],
+#     [  1,  7, 17,  4 ],
+#     [  9,  7, 10,  3 ],
+#     [  6,  8, 12,  4 ],
+# ]
+
 existing = [
-    [  9, 20, 28, 10],
-    [  5, 11, 15,  4 ],
-    [  5, 16, 18,  4 ],
-    [  8, 15, 18,  4 ],
-    [ 11, 12, 20,  3 ],
-    [ 11, 22, 17,  5 ],
-    [  7, 16, 23,  7 ],
-    [ 10, 17, 23,  8 ],
+    [ 10, 14, 16,  8 ],
+    [  7, 15, 18,  9 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
 ]
 new = [
+    [  3, 11,  6,  0 ],
+    [  5, 14, 11,  4 ],
     [  0,  0,  0,  0 ],
-    [  7, 11, 20,  3 ],
-    [  4,  9,  6,  4 ],
-    [  5,  6,  0,  3 ],
-    [  5,  4,  4,  3 ],
-    [  1,  7, 17,  4 ],
-    [  9,  7, 10,  3 ],
-    [  6,  8, 12,  4 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
+    [  0,  0,  0,  0 ],
 ]
 
 total = [ sum(e) + sum(n) for (e,n) in zip (existing, new) ]
@@ -57,7 +78,7 @@ color_mapper1 = CategoricalColorMapper(factors=['a', 'b', 'c', 'd'], palette=['#
 color_mapper2 = CategoricalColorMapper(factors=['a', 'b', 'c', 'd'], palette=['#f2bba8',"#e1eb9e","#b1d1e2","#ffe699"])
 
 
-p = figure(hidpi=True, sizing_mode="scale_width", x_range=FactorRange(*factors), plot_height=250, plot_width=900, toolbar_location=None, tools="")
+p = figure(hidpi=True, sizing_mode="scale_width", title='Weekly Participation', x_range=FactorRange(*factors), plot_height=250, plot_width=900, toolbar_location=None, tools="")
 
 #p.vbar_stack(classification, x='x', width=0.8, alpha=1, line_width=1, line_color="#ed7d31", fill_color=["#ffc000", "#ffd966"], source=source, legend=[value(x) for x in classification])
 p.vbar(bottom=stack(), top=existing_flat, x=factors, width=0.8, line_color='#333333', fill_color=['#df5327','#a6b727','#418ab3','#fec306']*num_weeks)
@@ -70,10 +91,13 @@ p.y_range.end = 40
 p.x_range.range_padding = 0.02
 #p.x_range.group_padding = 10
 p.xaxis.major_label_orientation = 1
+p.xaxis.major_label_text_font_size = '8pt'
+p.xaxis.group_text_font_size = '10pt'
+p.yaxis.major_label_text_font_size = '8pt'
 p.yaxis.minor_tick_line_color = None
 p.xgrid.grid_line_color = None
-p.legend.location = "top_center"
-p.legend.orientation = "horizontal"
+p.title.align = 'center'
+p.title.text_font_size = '14pt'
 
 #labels = LabelSet(x='x', y=40, text=total, level='glyph')
 labels = [Label(text_font_size="8pt", text="{}".format(t), y=h+2, x=(2+5.4*i), text_align="center") for (t,i,h) in zip(total,range(len(total)),max_heights)]
