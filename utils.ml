@@ -108,34 +108,26 @@ let unlink file =
     | e -> print_endline (Printexc.to_string e)
 ;;
 
-let profile_results_cache = Hashtbl.create 100;;
-
 let rec fetch_placings url n =
-    if (contains_substring "=profile_results" url) && (Hashtbl.mem profile_results_cache url) then begin
-        if !verbose then Printf.printf "\x1B[92mFetched %s (from cache)...\x1B[39m\n%!" url;
-        Hashtbl.find profile_results_cache url
-    end else begin
-        if n = 0 then failwith "retry exceeded";
-        begin try
-            unlink "temp/jq.fifo";
-            unlink "temp/atd.fifo";
-            Unix.mkfifo "temp/jq.fifo" 0o644;
-            Unix.mkfifo "temp/atd.fifo" 0o644;
-            let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
-            Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "temp/jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
-            get url (open_out "temp/jq.fifo");
-            Unix.close out_fd;
-            let ic = open_in "temp/atd.fifo" in
-            let results = Results_j.placings_of_string (read_all ic) in
-            close_in ic;
-            unlink "temp/atd.fifo";
-            unlink "temp/jq.fifo";
-            Hashtbl.add profile_results_cache url results;
-            results
-        with exn ->
-            print_endline (Printexc.to_string exn);
-            fetch_placings url (n-1)
-        end
+    if n = 0 then failwith "retry exceeded";
+    begin try
+        unlink "temp/jq.fifo";
+        unlink "temp/atd.fifo";
+        Unix.mkfifo "temp/jq.fifo" 0o644;
+        Unix.mkfifo "temp/atd.fifo" 0o644;
+        let out_fd = Unix.openfile "temp/atd.fifo" [Unix.O_RDWR; Unix.O_NONBLOCK] 0 in
+        Unix.create_process "jq" [|"--unbuffered"; "-f"; "postprocess.jq"; "temp/jq.fifo"|] Unix.stdin out_fd Unix.stdout |> ignore;
+        get url (open_out "temp/jq.fifo");
+        Unix.close out_fd;
+        let ic = open_in "temp/atd.fifo" in
+        let results = Results_j.placings_of_string (read_all ic) in
+        close_in ic;
+        unlink "temp/atd.fifo";
+        unlink "temp/jq.fifo";
+        results
+    with exn ->
+        print_endline (Printexc.to_string exn);
+        fetch_placings url (n-1)
     end
 ;;
 

@@ -187,18 +187,20 @@ let edit_places_check event_id results zwifters =
 (* so we don't hit the API repeatedly *)
 let zwift_places = ref IntMap.empty;;
 
-let get_placings zwift_id = match IntMap.find_opt zwift_id !zwift_places with
-    | Some placings ->
+let get_placings ?(use_cache = true) zwift_id = match use_cache, IntMap.find_opt zwift_id !zwift_places with
+    | true, Some placings ->
         if !Utils.verbose then
             Printf.printf "\x1B[92mFetched https://www.zwiftpower.com/api3.php?do=profile_results&z=%d&type=all (from cache)...\x1B[39m\n%!" zwift_id;
         placings
-    | None ->
+    | false, _ | true, None ->
         let placings = Utils.fetch_placings (Printf.sprintf
             "https://www.zwiftpower.com/api3.php?do=profile_results&z=%d&type=all" zwift_id)
         in
         zwift_places := IntMap.add zwift_id placings !zwift_places;
         placings
 ;;
+
+let get_placings zwift_id = get_placings ~use_cache:false zwift_id
 
 let fetch_event event_id =
     Utils.flatten_placings (Utils.fetch_placings (Printf.sprintf
@@ -237,7 +239,14 @@ let results_prior_to_event zwift_id event_id =
 let results_prior_week zwift_id event_ids =
     let placings = (get_placings zwift_id).placings |> Array.to_list |> List.concat in
     let results = List.map (fun event_id ->
-        List.find_opt (fun placing -> placing.p_zid = event_id) placings) event_ids in
+        List.find_opt (fun placing ->
+            if placing.p_zwid = "117618" then begin
+                if placing.p_zid = event_id then begin
+                    Printf.printf "Got matching event %s, with category = %s\n"
+                        event_id (Category.unwrap placing.p_category)
+                end;
+            end;
+            placing.p_zid = event_id) placings) event_ids in
     let rec loop placing = function
     | None :: tail -> loop placing tail
     | p :: tail -> loop p tail
@@ -354,7 +363,7 @@ module Results (T : RaceType) = struct
                             result_cat = min placing.p_category (T.placing_to_cat placing)
                         }
             with
-            | Failure "empty list" -> {
+            | Failure "empty list" | Not_found -> {
                     zwift_id = int_of_string placing.p_zwid;
                     original_place = placing;
                     place = placing;
@@ -652,9 +661,9 @@ let process_rw event previous functions =
     let race_points = points race in
     event, race;;
 
-let process f events =
-    let women = ok "Women" in
-    let ages = ok "ages" in
+let process f events women ages =
+    (*let women = ok "Women" in
+    let ages = ok "ages" in*)
     let raceModule : (module RaceFunctions) =
         if women then (module Results(Women))
         else if ages then (module Results(Ages))
@@ -815,6 +824,18 @@ let dq_points_below_cat results =
     results
 ;;
 
+let best_cat db id =
+    Sqlexpr.select db
+        [%sqlc "SELECT @s{MIN(category)} FROM race_result WHERE individual_id = %d"] id
+;;
+
+let remove_results_below_cat id db =
+    let best_cat = Sqlexpr.select db
+        [%sqlc "SELECT @s{MIN(category)} FROM race_result WHERE individual_id = %d"] id |> List.hd in
+    Sqlexpr.execute db
+        [%sqlc "DELETE FROM race_result WHERE individual_id = %d AND category NOT LIKE %s"] id best_cat
+;;
+
 let total_points db bonuses_f best_results_f transform_points_f =
     (*let best_points = best_points db in*)
     let best_points = best_results_f db in
@@ -900,7 +921,7 @@ let team_points db with_bonus =
 ;;
 
 let print_results rows =
-    print_endline "category,events,points,tname,tid,tc,tbc,tbd,name,flag,zwid,podiums";
+    print_endline "category,events,points,tname,tid,tc,tbc,tbd,name,flag,zwid,podiums,upgrades";
     List.iter (fun [category; events; points; tname; tid; tc; tbc; tbd; name; flag; zwid; podiums; upgrades] ->
         Printf.printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n"
             category events points tname tid tc tbc tbd name flag zwid podiums upgrades) rows;;
@@ -911,6 +932,13 @@ let print_team_results rows =
         Printf.printf "%s,%s,%s,%s,%s,%s,%s,%s\n"
             category events points tname tid tc tbc tbd) rows;;
 
+let memdb () = Sqlexpr.open_db ":memory:"
+;;
+
+let maybe f = function
+    | None -> f ()
+    | Some v -> v
+
 module Wild = struct
     let filtered () =
         all_wild |> Array.to_list
@@ -920,11 +948,10 @@ module Wild = struct
         |> List.filter (fun r -> r.p_category = Category.Flagged "HR" || r.p_category = Category.Flagged "ZP")
     ;;
 
-    let go name =
-        let name = if String.length name = 0 then ":memory:" else name in
-        let db = Sqlexpr.open_db name in
+    let go db =
+        let db = maybe memdb db in
         Database.init_db db;
-        let data = process process_ro all_wild in
+        let data = process process_ro all_wild true false in
         gogogo db data;
         (*let all_bonuses = bonuses db in*)
         let points = total_points db bonuses (best_points_wild wild) halve_points_below_cat
@@ -937,36 +964,57 @@ module Wild = struct
 end
 
 module Crit = struct
-    let go () =
+    let go db =
         Printexc.record_backtrace true;
         try
-        let db = Sqlexpr.open_db ":memory:" in
+        let db = maybe memdb db in
         Database.init_db db;
-        let data = process process_rw criterium in
+        let data = process process_rw criterium false false in
         gogogo db data;
         let points = total_points db no_bonuses best_points_std dq_points_below_cat in
         final_results db points, team_points db false, db
         with exc -> Printexc.print_backtrace stdout; raise exc
+    
+    let get db =
+        let db = maybe memdb db in
+        Database.init_db db;
+        let data = process process_ro criterium false false in
+        gogogo db data;
+        db
 end
 
 module IronGoat = struct
-    let go () =
-        let db = Sqlexpr.open_db ":memory:" in
+    let go db =
+        let db = maybe memdb db in
         Database.init_db db;
-        let data = process process_rw irongoat in
+        let data = process process_rw irongoat false false in
         gogogo db data;
         let points = total_points db no_bonuses best_points_std dq_points_below_cat in
         final_results db points, team_points db false, db
+    
+    let get db =
+        let db = maybe memdb db in
+        Database.init_db db;
+        let data = process process_ro irongoat false false in
+        gogogo db data;
+        db
 end
 
 module TimeTrial = struct
-    let go () =
-        let db = Sqlexpr.open_db ":memory:" in
+    let go db =
+        let db = maybe memdb db in
         Database.init_db db;
-        let data = process process_rw timetrial in
+        let data = process process_rw timetrial false false in
         gogogo db data;
         let points = total_points db no_bonuses best_points_std dq_points_below_cat in
         final_results db points, team_points db false, db
+    
+    let get db =
+        let db = maybe memdb db in
+        Database.init_db db;
+        let data = process process_ro timetrial false false in
+        gogogo db data;
+        db
 end
 
 module Ages = struct
@@ -1000,14 +1048,69 @@ module Ages = struct
             end)
     ;;
 
-    let go () =
+    let go db =
         fix_incorrectly_flagged_age ();
-        let db = Sqlexpr.open_db ":memory:" in
+        let db = maybe memdb db in
         Database.init_db db;
-        let data = process process_ro ages in
+        let data = process process_ro ages false true in
         gogogo db data;
         let points = total_points db no_bonuses best_points_std dq_points_below_cat in
         final_results db points, team_points db false, db
+    
+    let get db =
+        let db = maybe memdb db in
+        Database.init_db db;
+        let data = process process_ro ages false true in
+        gogogo db data;
+        db
+end
+
+module Fuzion = struct
+    let copydb src dst =
+        Sqlexpr.iter src (fun (id, name, colour, background, border) ->
+            try Sqlexpr.insert dst
+                [%sqlc "INSERT INTO team(team_id, team_name, team_colour, team_background_colour, team_border_colour)
+					VALUES(%d, %s, %s, %s, %s)"]
+                id name colour background border |> ignore
+            with _ -> ())
+            [%sqlc "SELECT @d{team_id}, @s{team_name}, @s{team_colour}, @s{team_background_colour}, @s{team_border_colour} FROM team"];
+        Sqlexpr.iter src (fun (id, name, flag) ->
+            try Sqlexpr.insert dst
+                [%sqlc "INSERT INTO individual(individual_id, individual_name, individual_flag)
+                        VALUES(%d, %s, %s?)
+                        ON CONFLICT(individual_id) DO UPDATE SET
+                            individual_name = excluded.individual_name,
+                            individual_flag = IFNULL(excluded.individual_flag, individual.individual_flag);"]
+                id name flag |> ignore
+            with _ -> ())
+            [%sqlc "SELECT @d{individual_id}, @s{individual_name}, @s?{individual_flag} FROM individual"];
+        Sqlexpr.iter src (fun (iid, rid, tid, pos, cat) ->
+            Sqlexpr.insert dst
+                [%sqlc "INSERT INTO race_result(individual_id, race_id, team_id, position, category)
+				        VALUES(%d, %d, %d?, %d, %s);"]
+			    iid rid tid pos cat |> ignore)
+            [%sqlc "SELECT @d{individual_id}, @d{race_id}, @d?{team_id}, @d{position}, @s{category} FROM race_result"]
+    ;;
+
+    let go () =
+        let db1 = Ages.get None in
+        let db2 = IronGoat.get None in
+        let db3 = TimeTrial.get None in
+        let db4 = Crit.get None in
+        List.iter (fun id -> remove_results_below_cat id db1) (racers db1);
+        List.iter (fun id -> remove_results_below_cat id db2) (racers db2);
+        List.iter (fun id -> remove_results_below_cat id db3) (racers db3);
+        List.iter (fun id -> remove_results_below_cat id db4) (racers db4);
+        let db = memdb () in
+        Database.init_db db;
+        copydb db1 db;
+        copydb db2 db;
+        copydb db3 db;
+        copydb db4 db;
+        let points = total_points db no_bonuses best_points_std (fun x -> x) |> final_results db in
+        let teams = team_points db false in
+        points, teams
+
 end
 
 let results_for id db =
