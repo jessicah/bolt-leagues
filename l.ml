@@ -60,7 +60,7 @@ module List = struct
     | _ -> None
 end;;
 
-#use "events.ml";;
+(*#use "events.ml";;*)
 
 module IntMap = Map2.Make(struct type t = int let compare = compare end);;
 
@@ -331,6 +331,14 @@ module Results (T : RaceType) = struct
                         | [] ->  None
                         | evt_ids -> results_prior_week zwift_id evt_ids
                 in
+                begin match placing.p_wkg300 with
+                | Some f when f >= 6.0 ->
+                    Printf.printf "warning, %s above 5 minute W/kg limit for %d (%f)...\n" placing.p_zwid event_id f;
+                | _ -> () end;
+                begin match placing.p_wkg1200 with
+                | Some f when f >= 5.0 ->
+                    Printf.printf "warning, %s above 20 minute W/kg limit for %d (%f)...\n" placing.p_zwid event_id f;
+                | _ -> () end;
                 match prev_event_results, T.uses_race_history with
                     | None, true ->
                         let results = results_prior_to_event (int_of_string placing.p_zwid) event_id in
@@ -920,11 +928,15 @@ let team_points db with_bonus =
         category :: string_of_int events :: string_of_int points :: tname :: tid :: tc :: tbc :: tbd :: [])
 ;;
 
+let clean_name str =
+	String.concat "" (String.split_on_char ',' str)
+;;
+
 let print_results rows =
     print_endline "category,events,points,tname,tid,tc,tbc,tbd,name,flag,zwid,podiums,upgrades";
     List.iter (fun [category; events; points; tname; tid; tc; tbc; tbd; name; flag; zwid; podiums; upgrades] ->
         Printf.printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n"
-            category events points tname tid tc tbc tbd name flag zwid podiums upgrades) rows;;
+            category events points tname tid tc tbc tbd (clean_name name) flag zwid podiums upgrades) rows;;
 
 let print_team_results rows =
     print_endline "category,events,points,tid,tname,tc,tbc,tbd";

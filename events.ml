@@ -55,7 +55,7 @@ end
 
 module Series_3 = struct
 	let wild =
-		[| 193830, 193831; 194980, 197024; |]
+		[| 193830, 193831; 194980, 197024; 198168, 198723; 199917, 200269; 201560, 201908; |]
 	
 	let ages =
 		[| 183326; 185355; 187325; 189406; 191076; 192713; 194483; 196217; (* 197975 *)|]
@@ -70,7 +70,21 @@ module Series_3 = struct
 		[| 185084; 187074; 189065; 190875; 192372; 194219; 195968; 197750; |]
 end
 
-open Series_3
+module Series_4 = struct
+	let ages =
+		[| 197957; 199754; 201377; |]
+	
+	let irongoat =
+		[| 198403; 200137; 201770; |]
+	
+	let timetrial =
+		[| 199197; 200887; |]
+	
+	let criterium =
+		[| 199462; 201162; |]
+end
+
+open Series_4
 
 module type WildData = sig
 	val wild : (int * int) array
